@@ -92,6 +92,19 @@
       <span class="tag" id="statusTag">READY</span>
     </div>
 
+    <div class="row" style="margin-bottom:6px;">
+      <label>X <input id="buildX" type="number" min="0" max="99" value="50"/></label>
+      <label>Y <input id="buildY" type="number" min="0" max="99" value="50"/></label>
+      <label>建築
+        <select id="buildType" style="background:#0f0f0f;color:#eee;border:1px solid #333;padding:6px 8px;border-radius:6px;">
+          <option value="lumberyard">伐木場 (lumberyard)</option>
+          <option value="mining_site">採礦場 (mining_site)</option>
+          <option value="granary">糧倉 (granary)</option>
+        </select>
+      </label>
+      <button id="buildBtn">建造</button>
+    </div>
+
     <div class="divider"></div>
     <h2>科技樹</h2>
     <div class="row" style="margin-bottom:6px;">

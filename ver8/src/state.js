@@ -56,6 +56,8 @@ export const state = {
   knownMeatIds: [],
 
   storage: { x: 50, y: 50, wood: 0, ore: 0, food: 0 },
+  buildings: [],
+  buildingAt: null,
 
   units: [],
   workers: [],
@@ -66,6 +68,11 @@ export const state = {
   parkTiles: [],
   dropReservedBy: null,
   parkReservedBy: null,
+  dropOwner: null,
+  parkOwner: null,
+
+  hoverX: null,
+  hoverY: null,
 
   visOffsetsWorker: [],
   visOffsetsScout: [],

@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { generate, resizeCanvases, updateVisibilityAndFogLayers } from "./world.js";
+import { generate, resizeCanvases, updateVisibilityAndFogLayers, addBuilding } from "./world.js";
 import { initAstarArrays } from "./pathfinding.js";
 import { log, updateInfo, tick, render, setStatus } from "./sim.js";
 
@@ -56,7 +56,27 @@ const btnStart=document.getElementById("start");
 const btnPause=document.getElementById("pause");
 const btnStep=document.getElementById("step");
 const btnClear=document.getElementById("clearlog");
+const inpBuildX=document.getElementById("buildX");
+const inpBuildY=document.getElementById("buildY");
+const selBuildType=document.getElementById("buildType");
+const btnBuild=document.getElementById("buildBtn");
 btnClear.onclick=()=> (state.dom.logEl.textContent="");
+
+btnBuild.onclick=()=>{
+  if(!state.grid){ log("請先按「生成地圖」。"); return; }
+  const x=clampInt(inpBuildX.value,0,state.constants.W-1,0);
+  const y=clampInt(inpBuildY.value,0,state.constants.H-1,0);
+  const type=selBuildType.value;
+  inpBuildX.value=x; inpBuildY.value=y;
+  const res=addBuilding(type,x,y);
+  if(!res.ok){
+    log("建造失敗：位置不可用。");
+    return;
+  }
+  log(`建造完成：${type} @(${x},${y})`);
+  updateInfo();
+  render();
+};
 
 ageUpBtn.onclick=()=>{
   if(!state.grid){ log("請先按「生成地圖」。"); return; }
@@ -227,6 +247,23 @@ canvas.addEventListener("click",(ev)=>{
   else if(rt===state.constants.ResT.Rock){ state.preferred={type:"rock",id:state.resIdAt[i]}; log(`偏好目標：礦#${state.preferred.id} @(${mx},${my})`); }
   else if(rt===state.constants.ResT.Meat){ state.preferred={type:"meat",id:state.resIdAt[i]}; log(`偏好目標：肉#${state.preferred.id} @(${mx},${my})`); }
   else log(`(點擊) 不是樹/礦/肉：(${mx},${my})`);
+});
+
+canvas.addEventListener("mousemove",(ev)=>{
+  if(!state.grid) return;
+  const rect=canvas.getBoundingClientRect();
+  const mx=((ev.clientX-rect.left)/state.TILEPX)|0;
+  const my=((ev.clientY-rect.top)/state.TILEPX)|0;
+  if(mx<0||my<0||mx>=state.constants.W||my>=state.constants.H){
+    state.hoverX=null; state.hoverY=null;
+  } else {
+    state.hoverX=mx; state.hoverY=my;
+  }
+  updateInfo();
+});
+canvas.addEventListener("mouseleave",()=>{
+  state.hoverX=null; state.hoverY=null;
+  updateInfo();
 });
 
 window.onerror=(msg, src, line, col)=>{

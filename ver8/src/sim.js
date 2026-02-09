@@ -2,7 +2,7 @@
 import { state } from "./state.js";
 import {
   idx, xOf, yOf, inBounds, manhattan, cheb,
-  distToStorage, isAdjacentToStorage,
+  distToBuilding, isAdjacentToBuilding, distToNearestBuilding,
   drawFogTile, drawFogAll, drawBaseAll, eraseTileToBackground, drawMeatTile,
   updateVisibilityAndFogLayers,
   isWalkableTile, canMoveDiag,
@@ -31,6 +31,32 @@ function padL(s,w){ s=String(s); return (s.length>=w)?s:(" ".repeat(w-s.length)+
 
 function countAlive(list){ let c=0; for(const r of list) if(r.alive) c++; return c; }
 function countAnimalsAlive(){ let c=0; for(const a of state.animals) if(a.state!=="Dead") c++; return c; }
+function getTownCenter(){
+  for(const b of state.buildings) if(b.type==="town_center") return b;
+  return state.buildings[0] || null;
+}
+function getCandidateBuildingsForRole(role){
+  const out=[];
+  if(role==="lumber"){
+    for(const b of state.buildings) if(b.type==="lumberyard") out.push(b);
+  } else if(role==="miner"){
+    for(const b of state.buildings) if(b.type==="mining_site") out.push(b);
+  } else if(role==="hunter"){
+    for(const b of state.buildings) if(b.type==="granary") out.push(b);
+  }
+  const town=getTownCenter();
+  if(town && !out.includes(town)) out.push(town);
+  return out;
+}
+function pickNearestBuilding(u, list){
+  if(!list.length) return null;
+  let best=list[0], bestD=1e9;
+  for(const b of list){
+    const d=distToBuilding(u.x,u.y,b);
+    if(d<bestD){ bestD=d; best=b; }
+  }
+  return best;
+}
 
 function updateInfo(){
   const aliveTrees=countAlive(state.trees||[]);
@@ -83,7 +109,9 @@ function updateInfo(){
     const scoutMove = state.TICK_HZ;
     const hunterMove = state.TICK_HZ;
     const animalMove = (1 / state.constants.ANIMAL_MOVE_INTERVAL).toFixed(2);
+    const hx=(state.hoverX==null || state.hoverY==null) ? "--" : `${state.hoverX},${state.hoverY}`;
     const lines=[
+      `游標座標: (${hx})`,
       `伐木效率: x${state.chopRate.toFixed(2)}`,
       `採礦效率: x${state.mineRate.toFixed(2)}`,
       `伐木工移速: ${workerMove.toFixed(1)} 格/秒`,
@@ -129,9 +157,13 @@ function requestMoveToResource(u,target){
 }
 
 function requestMoveToStorageLogic(u){
-  if(isAdjacentToStorage(u.x,u.y)){ u.state="Dropoff"; return; }
+  const candidates=getCandidateBuildingsForRole(u.role);
+  const b=pickNearestBuilding(u, candidates);
+  if(!b) return;
+  u.storageTargetId=b.id;
+  if(isAdjacentToBuilding(u.x,u.y,b)){ u.state="Dropoff"; return; }
 
-  const dropI=ensureDropReservation(u);
+  const dropI=reserveTileFromList(u.id, b.dropTiles, state.dropReservedBy);
   if(dropI!==-1){
     if(u.parkTileI!=null){ releaseReservation(u.id, state.parkTiles, state.parkReservedBy); u.parkTileI=null; }
     u.intent="ToStorage";
@@ -140,7 +172,7 @@ function requestMoveToStorageLogic(u){
     return;
   }
 
-  const parkI=ensureParkReservation(u);
+  const parkI=reserveTileFromList(u.id, b.parkTiles, state.parkReservedBy);
   if(parkI!==-1){
     u.intent="ToPark";
     requestPath(u.id, parkI);
@@ -155,7 +187,8 @@ function requestMoveToStorageLogic(u){
 }
 
 function doDropoff(u){
-  if(!isAdjacentToStorage(u.x,u.y)){ requestMoveToStorageLogic(u); return; }
+  const b=state.buildings.find(bb=>bb.id===u.storageTargetId) || getTownCenter();
+  if(!b || !isAdjacentToBuilding(u.x,u.y,b)){ requestMoveToStorageLogic(u); return; }
   if(u.carry>0){
     if(u.role==="lumber") state.storage.wood += u.carry;
     else if(u.role==="miner") state.storage.ore += u.carry;
@@ -170,9 +203,13 @@ function doDropoff(u){
 }
 
 function requestFlee(u){
-  const parkI=ensureParkReservation(u);
+  const all=state.buildings || [];
+  const b=pickNearestBuilding(u, all);
+  if(!b) return;
+  u.storageTargetId=b.id;
+  const parkI=reserveTileFromList(u.id, b.parkTiles, state.parkReservedBy);
   if(parkI!==-1){ u.intent="ToPark"; requestPath(u.id, parkI); u.state="ToPark"; return; }
-  const dropI=ensureDropReservation(u);
+  const dropI=reserveTileFromList(u.id, b.dropTiles, state.dropReservedBy);
   if(dropI!==-1){ u.intent="ToStorage"; requestPath(u.id, dropI); u.state="ToStorage"; return; }
   u.state="QueueStorage";
   u.nextDropRetryTick=state.tickCount + Math.max(6,(state.TICK_HZ/2)|0);
@@ -182,7 +219,12 @@ function tickWorkerFleeRecovery(u){
   if(!u.flee || !isWorkerRole(u.role)) return false;
 
   u.healCD = Math.max(0, u.healCD-state.STEP_TIME);
-  const inParkRing = (distToStorage(u.x,u.y)===state.constants.PARK_RING_R);
+  let parkB=null;
+  if(u.parkTileI!=null && state.parkOwner){ 
+    const bid=state.parkOwner[u.parkTileI];
+    if(bid!=null && bid>=0) parkB=state.buildings.find(bb=>bb.id===bid);
+  }
+  const inParkRing = parkB ? (distToBuilding(u.x,u.y,parkB)===state.constants.PARK_RING_R) : (distToNearestBuilding(u.x,u.y)===state.constants.PARK_RING_R);
   if(inParkRing && u.healCD<=0){
     if(u.hp < u.maxHP && state.storage.food>0){
       u.hp = Math.min(u.maxHP, u.hp+1);
@@ -357,7 +399,7 @@ function findFreeNeighborForUnit(v, avoidI){
     if(state.dropReservedBy[ni]!==-1 && state.dropReservedBy[ni]!==v.id) continue;
     if(state.parkReservedBy[ni]!==-1 && state.parkReservedBy[ni]!==v.id) continue;
     if(state.occupied[ni]!==-1) continue;
-    const score = distToStorage(nx,ny) + Math.abs(nx-v.x)+Math.abs(ny-v.y)*0.2;
+    const score = distToNearestBuilding(nx,ny) + Math.abs(nx-v.x)+Math.abs(ny-v.y)*0.2;
     if(score<bestScore){ bestScore=score; best=ni; }
   }
   return best;
@@ -367,7 +409,7 @@ function tryYieldOrPush(u, nextI){
   if(vId===-1) return false;
   const v = state.units[vId];
   if(!v) return false;
-  if(distToStorage(u.x,u.y) > state.constants.PUSH_NEAR_STORAGE_R) return false;
+  if(distToNearestBuilding(u.x,u.y) > state.constants.PUSH_NEAR_STORAGE_R) return false;
 
   if(v.path && v.path.length && v.path[0]===idx(u.x,u.y)){
     state.occupied[idx(u.x,u.y)] = v.id;
@@ -451,25 +493,29 @@ function tickWorker(u){
 
   if(u.state==="Parked" || u.state==="QueueStorage"){
     if(u.flee){
-      if(distToStorage(u.x,u.y)!==state.constants.PARK_RING_R){
-        const parkI=ensureParkReservation(u);
-        if(parkI!==-1){ u.intent="ToPark"; requestPath(u.id, parkI); u.state="ToPark"; return; }
-        const freeI=pickFreeTileFromList(u, state.parkTiles);
-        if(freeI!==-1){ u.intent="ToPark"; requestPath(u.id, freeI); u.state="ToPark"; return; }
+      const b=state.buildings.find(bb=>bb.id===u.storageTargetId) || pickNearestBuilding(u, state.buildings||[]);
+      if(b){
+        if(distToBuilding(u.x,u.y,b)!==state.constants.PARK_RING_R){
+          const parkI=reserveTileFromList(u.id, b.parkTiles, state.parkReservedBy);
+          if(parkI!==-1){ u.intent="ToPark"; requestPath(u.id, parkI); u.state="ToPark"; return; }
+          const freeI=pickFreeTileFromList(u, b.parkTiles);
+          if(freeI!==-1){ u.intent="ToPark"; requestPath(u.id, freeI); u.state="ToPark"; return; }
+        }
       }
       return;
     }
     if(state.tickCount >= u.nextDropRetryTick){
       u.nextDropRetryTick = state.tickCount + Math.max(6, (state.TICK_HZ/2)|0);
-      const dropI=ensureDropReservation(u);
+      const b=state.buildings.find(bb=>bb.id===u.storageTargetId) || pickNearestBuilding(u, getCandidateBuildingsForRole(u.role));
+      const dropI=b ? reserveTileFromList(u.id, b.dropTiles, state.dropReservedBy) : -1;
       if(dropI!==-1){
         if(u.parkTileI!=null){ releaseReservation(u.id, state.parkTiles, state.parkReservedBy); u.parkTileI=null; }
         u.intent="ToStorage"; requestPath(u.id, dropI); u.state="ToStorage";
       } else if(u.state==="QueueStorage"){
-        const parkI=ensureParkReservation(u);
+        const parkI=b ? reserveTileFromList(u.id, b.parkTiles, state.parkReservedBy) : -1;
         if(parkI!==-1){ u.intent="ToPark"; requestPath(u.id, parkI); u.state="ToPark"; }
         else {
-          const freeI=pickFreeTileFromList(u, state.parkTiles);
+          const freeI=b ? pickFreeTileFromList(u, b.parkTiles) : -1;
           if(freeI!==-1){ u.intent="ToPark"; requestPath(u.id, freeI); u.state="ToPark"; }
         }
       }

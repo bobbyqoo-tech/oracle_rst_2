@@ -11,11 +11,27 @@ const inBounds = (x,y)=> x>=0&&x<W&&y>=0&&y<H;
 const manhattan = (ax,ay,bx,by)=> Math.abs(ax-bx)+Math.abs(ay-by);
 const cheb = (ax,ay,bx,by)=> Math.max(Math.abs(ax-bx), Math.abs(ay-by));
 
-function distToStorage(x,y){
-  return Math.max(Math.abs(x-state.storage.x), Math.abs(y-state.storage.y));
+function distToBuilding(x,y,b){
+  return Math.max(Math.abs(x-b.x), Math.abs(y-b.y));
 }
-function isAdjacentToStorage(x,y){
-  return Math.abs(x-state.storage.x)<=1 && Math.abs(y-state.storage.y)<=1 && !(x===state.storage.x && y===state.storage.y);
+function isAdjacentToBuilding(x,y,b){
+  return Math.abs(x-b.x)<=1 && Math.abs(y-b.y)<=1 && !(x===b.x && y===b.y);
+}
+function distToNearestBuilding(x,y){
+  if(!state.buildings || !state.buildings.length) return 9999;
+  let best=9999;
+  for(const b of state.buildings){
+    const d=distToBuilding(x,y,b);
+    if(d<best) best=d;
+  }
+  return best;
+}
+function buildingAt(x,y){
+  if(!state.buildingAt) return null;
+  const i=idx(x,y);
+  const id=state.buildingAt[i];
+  if(id==null || id<0) return null;
+  return state.buildings.find(b=>b.id===id) || null;
 }
 
 function resizeCanvases(){
@@ -32,8 +48,14 @@ function resizeCanvases(){
 function clearCanvas(c){ c.clearRect(0,0,c.canvas.width,c.canvas.height); }
 
 function drawStorageAndRings(){
-  state.baseCtx.fillStyle="rgb(220,200,60)";
-  state.baseCtx.fillRect(state.storage.x*state.TILEPX, state.storage.y*state.TILEPX, state.TILEPX, state.TILEPX);
+  for(const b of state.buildings){
+    if(b.type==="town_center") state.baseCtx.fillStyle="rgb(220,200,60)";
+    else if(b.type==="lumberyard") state.baseCtx.fillStyle="rgb(120,200,120)";
+    else if(b.type==="mining_site") state.baseCtx.fillStyle="rgb(140,120,220)";
+    else if(b.type==="granary") state.baseCtx.fillStyle="rgb(220,160,90)";
+    else state.baseCtx.fillStyle="rgb(200,200,200)";
+    state.baseCtx.fillRect(b.x*state.TILEPX, b.y*state.TILEPX, state.TILEPX, state.TILEPX);
+  }
 
   state.baseCtx.fillStyle="rgba(220,200,60,0.22)";
   for(const ti of state.dropTiles){
@@ -72,7 +94,7 @@ function eraseTileToBackground(i){
   } else if(state.grid[i]===state.constants.Tile.Storage){
     drawStorageAndRings();
   } else {
-    const r=distToStorage(x,y);
+    const r=distToNearestBuilding(x,y);
     if(r===state.constants.STORAGE_RING_R){
       state.baseCtx.fillStyle="rgba(220,200,60,0.22)";
       state.baseCtx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
@@ -193,20 +215,34 @@ function rebuildAnimalOccupancy(){
 
 function buildRings(){
   state.dropTiles=[]; state.parkTiles=[];
-  for(let dy=-state.constants.PARK_RING_R; dy<=state.constants.PARK_RING_R; dy++){
-    for(let dx=-state.constants.PARK_RING_R; dx<=state.constants.PARK_RING_R; dx++){
-      const x=state.storage.x+dx, y=state.storage.y+dy;
-      if(!inBounds(x,y)) continue;
-      if(dx===0 && dy===0) continue;
+  state.dropOwner = new Int32Array(N); state.dropOwner.fill(-1);
+  state.parkOwner = new Int32Array(N); state.parkOwner.fill(-1);
+  for(const b of state.buildings){
+    b.dropTiles=[]; b.parkTiles=[];
+    for(let dy=-state.constants.PARK_RING_R; dy<=state.constants.PARK_RING_R; dy++){
+      for(let dx=-state.constants.PARK_RING_R; dx<=state.constants.PARK_RING_R; dx++){
+        const x=b.x+dx, y=b.y+dy;
+        if(!inBounds(x,y)) continue;
+        if(dx===0 && dy===0) continue;
 
-      const r = Math.max(Math.abs(dx), Math.abs(dy));
-      const i=idx(x,y);
+        const r = Math.max(Math.abs(dx), Math.abs(dy));
+        const i=idx(x,y);
 
-      if(state.grid[i]===state.constants.Tile.Block) continue;
-      if(state.resType[i]!==state.constants.ResT.None) continue;
+        if(state.grid[i]===state.constants.Tile.Block) continue;
+        if(state.resType[i]!==state.constants.ResT.None) continue;
 
-      if(r===state.constants.STORAGE_RING_R) state.dropTiles.push(i);
-      else if(r===state.constants.PARK_RING_R) state.parkTiles.push(i);
+        if(r===state.constants.STORAGE_RING_R){
+          if(state.dropOwner[i]!==-1) continue;
+          state.dropTiles.push(i);
+          state.dropOwner[i]=b.id;
+          b.dropTiles.push(i);
+        } else if(r===state.constants.PARK_RING_R){
+          if(state.parkOwner[i]!==-1) continue;
+          state.parkTiles.push(i);
+          state.parkOwner[i]=b.id;
+          b.parkTiles.push(i);
+        }
+      }
     }
   }
 }
@@ -255,6 +291,32 @@ function pickFreeTileFromList(u, list){
   return best;
 }
 
+function canPlaceBuilding(x,y){
+  if(!inBounds(x,y)) return false;
+  const i=idx(x,y);
+  if(state.grid[i]===state.constants.Tile.Block) return false;
+  if(state.resType[i]!==state.constants.ResT.None) return false;
+  if(state.buildingAt && state.buildingAt[i]!==-1) return false;
+  if(state.occupied && state.occupied[i]!==-1) return false;
+  if(state.animalAt && state.animalAt[i]!==-1) return false;
+  return true;
+}
+
+function addBuilding(type,x,y){
+  if(!state.grid) return { ok:false, reason:"no_world" };
+  if(!canPlaceBuilding(x,y)) return { ok:false, reason:"blocked" };
+  const id=state.buildings.length;
+  const b={id,type,x,y,dropTiles:[],parkTiles:[]};
+  state.buildings.push(b);
+  if(state.buildingAt) state.buildingAt[idx(x,y)]=id;
+  state.grid[idx(x,y)] = state.constants.Tile.Storage;
+  buildRings();
+  state.dropReservedBy=new Int32Array(N); state.dropReservedBy.fill(-1);
+  state.parkReservedBy=new Int32Array(N); state.parkReservedBy.fill(-1);
+  drawBaseAll();
+  return { ok:true, id };
+}
+
 function roleMaxHP(role){
   if(role==="lumber") return state.HP_LUMBER;
   if(role==="miner") return state.HP_MINER;
@@ -290,6 +352,9 @@ function makeUnit(id,role,x,y){
     fleeFromAnimalId:-1,
     lastAttackerAnimalId:-1,
     lastHitTick:-1,
+    avoidTarget:null,
+    avoidUntilTick:0,
+    storageTargetId:-1,
   };
 }
 
@@ -446,28 +511,34 @@ function generate(params){
   state.animals=[];
   state.units=[]; state.workers=[]; state.scouts=[];
   state.preferred={type:null,id:null};
-  state.storage={x:(W/2)|0, y:(H/2)|0, wood:0, ore:0, food:0};
+  const centerX=(W/2)|0, centerY=(H/2)|0;
+  state.storage={x:centerX, y:centerY, wood:0, ore:0, food:0};
+  state.buildings=[];
+  state.buildingAt=new Int32Array(N); state.buildingAt.fill(-1);
+  const town={id:0,type:"town_center",x:centerX,y:centerY,dropTiles:[],parkTiles:[]};
+  state.buildings.push(town);
+  state.buildingAt[idx(centerX,centerY)] = town.id;
 
-  state.grid[idx(state.storage.x,state.storage.y)] = state.constants.Tile.Storage;
+  state.grid[idx(centerX,centerY)] = state.constants.Tile.Storage;
 
   addObstaclePatches(params.obsPercent);
 
-  for(let y=state.storage.y-4;y<=state.storage.y+4;y++){
-    for(let x=state.storage.x-4;x<=state.storage.x+4;x++){
+  for(let y=centerY-4;y<=centerY+4;y++){
+    for(let x=centerX-4;x<=centerX+4;x++){
       if(!inBounds(x,y)) continue;
       const i=idx(x,y);
-      state.grid[i] = (x===state.storage.x && y===state.storage.y) ? state.constants.Tile.Storage : state.constants.Tile.Empty;
+      state.grid[i] = (x===centerX && y===centerY) ? state.constants.Tile.Storage : state.constants.Tile.Empty;
     }
   }
 
-  const occ=new Set([`${state.storage.x},${state.storage.y}`]);
+  const occ=new Set([`${centerX},${centerY}`]);
   function spawnRole(n,role){
     let created=0;
     for(let ring=1; created<n && ring<60; ring++){
       for(let dy=-ring; dy<=ring && created<n; dy++){
         for(let dx=-ring; dx<=ring && created<n; dx++){
           if(Math.abs(dx)!==ring && Math.abs(dy)!==ring) continue;
-          const x=state.storage.x+dx, y=state.storage.y+dy;
+          const x=centerX+dx, y=centerY+dy;
           if(!inBounds(x,y)) continue;
           const i=idx(x,y);
           if(state.grid[i]===state.constants.Tile.Block) continue;
@@ -483,7 +554,7 @@ function generate(params){
       }
     }
     while(created<n){
-      const x=state.storage.x+1, y=state.storage.y;
+      const x=centerX+1, y=centerY;
       const id=state.units.length;
       const u=makeUnit(id,role,x,y);
       state.units.push(u);
@@ -499,21 +570,21 @@ function generate(params){
 
   rebuildOccupancy();
 
-  const treePts=spawnClusteredPoints(params.treeCount, occ, {x:state.storage.x,y:state.storage.y,dist:10});
+  const treePts=spawnClusteredPoints(params.treeCount, occ, {x:centerX,y:centerY,dist:10});
   state.trees = treePts.map((p,i)=>({id:i,x:p.x,y:p.y,amt:state.constants.TREE_MIN+((Math.random()*(state.constants.TREE_MAX-state.constants.TREE_MIN+1))|0), alive:true}));
   for(const t of state.trees){
     const ti=idx(t.x,t.y);
     state.resType[ti]=state.constants.ResT.Tree; state.resIdAt[ti]=t.id;
     occ.add(`${t.x},${t.y}`);
   }
-  const rockPts=spawnClusteredPoints(params.rockCount, occ, {x:state.storage.x,y:state.storage.y,dist:12});
+  const rockPts=spawnClusteredPoints(params.rockCount, occ, {x:centerX,y:centerY,dist:12});
   state.rocks = rockPts.map((p,i)=>({id:i,x:p.x,y:p.y,amt:state.constants.ROCK_MIN+((Math.random()*(state.constants.ROCK_MAX-state.constants.ROCK_MIN+1))|0), alive:true}));
   for(const r of state.rocks){
     const ri=idx(r.x,r.y);
     state.resType[ri]=state.constants.ResT.Rock; state.resIdAt[ri]=r.id;
   }
 
-  const animalPts=spawnSeparatedPoints(params.animalCount, occ, {x:state.storage.x,y:state.storage.y,dist:14}, state.constants.ANIMAL_MIN_DIST);
+  const animalPts=spawnSeparatedPoints(params.animalCount, occ, {x:centerX,y:centerY,dist:14}, state.constants.ANIMAL_MIN_DIST);
   state.animals = animalPts.map((p,i)=>makeAnimal(i,p.x,p.y));
   rebuildAnimalOccupancy();
 
@@ -538,13 +609,14 @@ function generate(params){
 
 export {
   idx, xOf, yOf, inBounds, manhattan, cheb,
-  distToStorage, isAdjacentToStorage,
+  distToBuilding, isAdjacentToBuilding, distToNearestBuilding, buildingAt,
   resizeCanvases, clearCanvas, drawStorageAndRings, drawTreeTile, drawRockTile, drawMeatTile,
   drawBaseAll, eraseTileToBackground, drawFogTile, drawFogAll,
   buildOffsets, clearFog, discoverResourceAtTile, updateVisibilityAndFogLayers,
   isWalkableTile, canMoveDiag,
   rebuildOccupancy, rebuildAnimalOccupancy,
   buildRings, reserveTileFromList, releaseReservation, ensureDropReservation, ensureParkReservation, pickFreeTileFromList,
+  canPlaceBuilding, addBuilding,
   roleMaxHP, isWorkerRole, makeUnit, makeAnimal,
   addObstaclePatches, spawnClusteredPoints, spawnSeparatedPoints,
   generate,
