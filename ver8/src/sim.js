@@ -510,6 +510,7 @@ function tickBuilder(u){
       u.state="Idle";
       u.target=null;
     }
+    }
     return;
   }
 
@@ -1019,17 +1020,29 @@ function render(){
   state.ctx.clearRect(0,0,state.canvas.width,state.canvas.height);
   state.ctx.drawImage(state.baseLayer,0,0);
 
-  for(let s=0;s<60;s++){
-    const x=(Math.random()*state.constants.W)|0, y=(Math.random()*state.constants.H)|0;
-    const i=idx(x,y);
+  for(const id of state.knownTreeIds){
+    const t=state.trees[id];
+    if(!t || !t.alive) continue;
+    const i=idx(t.x,t.y);
     if(!state.visible[i]) continue;
-    if(state.resType[i]===state.constants.ResT.Tree){
-      state.ctx.fillStyle="rgb(0,190,0)"; state.ctx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
-    } else if(state.resType[i]===state.constants.ResT.Rock){
-      state.ctx.fillStyle="rgb(160,80,255)"; state.ctx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
-    } else if(state.resType[i]===state.constants.ResT.Meat){
-      state.ctx.fillStyle="rgb(210,120,80)"; state.ctx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
-    }
+    state.ctx.fillStyle="rgb(0,190,0)";
+    state.ctx.fillRect(t.x*state.TILEPX,t.y*state.TILEPX,state.TILEPX,state.TILEPX);
+  }
+  for(const id of state.knownRockIds){
+    const r=state.rocks[id];
+    if(!r || !r.alive) continue;
+    const i=idx(r.x,r.y);
+    if(!state.visible[i]) continue;
+    state.ctx.fillStyle="rgb(160,80,255)";
+    state.ctx.fillRect(r.x*state.TILEPX,r.y*state.TILEPX,state.TILEPX,state.TILEPX);
+  }
+  for(const id of state.knownMeatIds){
+    const m=state.meats[id];
+    if(!m || !m.alive) continue;
+    const i=idx(m.x,m.y);
+    if(!state.visible[i]) continue;
+    state.ctx.fillStyle="rgb(210,120,80)";
+    state.ctx.fillRect(m.x*state.TILEPX,m.y*state.TILEPX,state.TILEPX,state.TILEPX);
   }
 
   for(const a of state.animals){
