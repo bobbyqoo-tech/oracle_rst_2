@@ -1,5 +1,5 @@
-import { state } from "./state.js";
-import { idx, xOf, yOf, inBounds, isWalkableTile, canMoveDiag, releaseReservation } from "./world.js";
+import { state } from "./state.js?v=9";
+import { idx, xOf, yOf, inBounds, isWalkableTile, canMoveDiag, releaseReservation } from "./world.js?v=9";
 
 function octileH(ax, ay, bx, by){
   const dx=Math.abs(ax-bx), dy=Math.abs(ay-by);

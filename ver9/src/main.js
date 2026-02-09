@@ -1,7 +1,7 @@
-import { state } from "./state.js";
-import { generate, resizeCanvases, updateVisibilityAndFogLayers, addBuilding } from "./world.js";
-import { initAstarArrays } from "./pathfinding.js";
-import { log, updateInfo, tick, render, setStatus } from "./sim.js";
+import { state } from "./state.js?v=9";
+import { generate, resizeCanvases, updateVisibilityAndFogLayers, addBuilding } from "./world.js?v=9";
+import { initAstarArrays } from "./pathfinding.js?v=9";
+import { log, updateInfo, tick, render, setStatus } from "./sim.js?v=9";
 
 const canvas=document.getElementById("c");
 const ctx=canvas.getContext("2d");

@@ -1,4 +1,4 @@
-import { constants } from "./constants.js";
+import { constants } from "./constants.js?v=9";
 
 export const state = {
   constants,

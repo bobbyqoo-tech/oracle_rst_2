@@ -1,5 +1,5 @@
 
-import { state } from "./state.js";
+import { state } from "./state.js?v=9";
 import {
   idx, xOf, yOf, inBounds, manhattan, cheb,
   distToBuilding, isAdjacentToBuilding, distToNearestBuilding,
@@ -9,8 +9,8 @@ import {
   rebuildOccupancy,
   reserveTileFromList, releaseReservation, ensureDropReservation, ensureParkReservation, pickFreeTileFromList,
   isWorkerRole,
-} from "./world.js";
-import { requestPath, processPathQueue } from "./pathfinding.js";
+} from "./world.js?v=9";
+import { requestPath, processPathQueue } from "./pathfinding.js?v=9";
 
 function nowStr(){ const t=new Date(); return `[${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}:${String(t.getSeconds()).padStart(2,"0")}]`; }
 function log(msg){ state.dom.logEl.textContent = `${nowStr()} ${msg}\n` + state.dom.logEl.textContent; }

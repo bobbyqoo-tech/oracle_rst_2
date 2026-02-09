@@ -1,4 +1,4 @@
-import { state } from "./state.js";
+import { state } from "./state.js?v=9";
 
 const W = state.constants.W;
 const H = state.constants.H;
