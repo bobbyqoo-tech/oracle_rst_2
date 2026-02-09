@@ -4,7 +4,7 @@ import {
   idx, xOf, yOf, inBounds, manhattan, cheb,
   distToBuilding, isAdjacentToBuilding, distToNearestBuilding,
   drawFogTile, drawFogAll, drawBaseAll, eraseTileToBackground, drawMeatTile, buildRings,
-  updateVisibilityAndFogLayers,
+  redrawDiscoveredResources, updateVisibilityAndFogLayers,
   isWalkableTile, canMoveDiag,
   rebuildOccupancy,
   reserveTileFromList, releaseReservation, ensureDropReservation, ensureParkReservation, pickFreeTileFromList,
@@ -500,10 +500,12 @@ function tickBuilder(u){
     if(b.progress>=1){
       b.built=true;
       b.progress=1;
-      if(typeof buildRings==="function") buildRings(); else log("建造完成但 buildRings 未載入");
+      if(typeof buildRings==="function") buildRings();
+      else log("建造完成但 buildRings 未載入");
       state.dropReservedBy=new Int32Array(state.constants.W*state.constants.H); state.dropReservedBy.fill(-1);
       state.parkReservedBy=new Int32Array(state.constants.W*state.constants.H); state.parkReservedBy.fill(-1);
       drawBaseAll();
+      redrawDiscoveredResources();
       log(`建造完成：${b.type} @(${b.x},${b.y})`);
       u.state="Idle";
       u.target=null;

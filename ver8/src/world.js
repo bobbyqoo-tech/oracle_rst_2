@@ -163,6 +163,17 @@ function discoverResourceAtTile(i){
   }
 }
 
+function redrawDiscoveredResources(){
+  if(!state.explored) return;
+  for(let i=0;i<N;i++){
+    if(!state.explored[i]) continue;
+    const rt=state.resType[i];
+    if(rt===state.constants.ResT.Tree) drawTreeTile(xOf(i), yOf(i));
+    else if(rt===state.constants.ResT.Rock) drawRockTile(xOf(i), yOf(i));
+    else if(rt===state.constants.ResT.Meat) drawMeatTile(xOf(i), yOf(i));
+  }
+}
+
 function updateVisibilityAndFogLayers(){
   state.visible.fill(0);
   for(const u of state.units){
@@ -321,6 +332,7 @@ function addBuilding(type,x,y){
   if(state.buildingAt) state.buildingAt[idx(x,y)]=id;
   state.grid[idx(x,y)] = state.constants.Tile.Storage;
   drawBaseAll();
+  redrawDiscoveredResources();
   return { ok:true, id };
 }
 
@@ -622,7 +634,7 @@ export {
   distToBuilding, isAdjacentToBuilding, distToNearestBuilding, buildingAt,
   resizeCanvases, clearCanvas, drawStorageAndRings, drawTreeTile, drawRockTile, drawMeatTile,
   drawBaseAll, eraseTileToBackground, drawFogTile, drawFogAll,
-  buildOffsets, clearFog, discoverResourceAtTile, updateVisibilityAndFogLayers,
+  buildOffsets, clearFog, discoverResourceAtTile, redrawDiscoveredResources, updateVisibilityAndFogLayers,
   isWalkableTile, canMoveDiag,
   rebuildOccupancy, rebuildAnimalOccupancy,
   buildRings, reserveTileFromList, releaseReservation, ensureDropReservation, ensureParkReservation, pickFreeTileFromList,
