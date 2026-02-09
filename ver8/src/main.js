@@ -14,6 +14,7 @@ state.dom.logEl=document.getElementById("log");
 state.dom.infoEl=document.getElementById("info");
 state.dom.statusTag=document.getElementById("statusTag");
 state.dom.hpAllEl=document.getElementById("hpAll");
+state.dom.statsEl=document.getElementById("statPanel");
 const ageTag=document.getElementById("ageTag");
 const ageUpBtn=document.getElementById("ageUp");
 const ageCostEl=document.getElementById("ageCost");

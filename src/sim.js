@@ -78,6 +78,23 @@ function updateInfo(){
     state.dom.hpAllEl.textContent = rows.length ? rows.join("\n") : "(無單位)";
   }
 
+  if(state.dom.statsEl){
+    const workerMove = state.TICK_HZ;
+    const scoutMove = state.TICK_HZ;
+    const hunterMove = state.TICK_HZ;
+    const animalMove = (1 / state.constants.ANIMAL_MOVE_INTERVAL).toFixed(2);
+    const lines=[
+      `伐木效率: x${state.chopRate.toFixed(2)}`,
+      `採礦效率: x${state.mineRate.toFixed(2)}`,
+      `伐木工移速: ${workerMove.toFixed(1)} 格/秒`,
+      `採礦工移速: ${workerMove.toFixed(1)} 格/秒`,
+      `獵人移速: ${hunterMove.toFixed(1)} 格/秒`,
+      `斥侯移速: ${scoutMove.toFixed(1)} 格/秒`,
+      `野生動物移速: ${animalMove} 格/秒`,
+    ];
+    state.dom.statsEl.textContent = lines.join("\n");
+  }
+
   if(state.refreshTechUI) state.refreshTechUI();
 }
 function requestMoveToResource(u,target){
@@ -221,6 +238,7 @@ function pickFromKnown(u, type, knownIds, arr, preferredId){
   let bestId=null, bestScore=Infinity;
 
   function consider(id){
+    if(u.avoidTarget && u.avoidTarget.type===type && u.avoidTarget.id===id && state.tickCount < u.avoidUntilTick) return;
     const res=arr[id];
     if(!res || !res.alive) return;
     const ri=idx(res.x,res.y);
@@ -401,6 +419,16 @@ function tickWorker(u){
     }
     if(!moved){
       if(u.stuckTicks>state.constants.PUSH_STUCK_TICKS && tryYieldOrPush(u, u.path[0])) return;
+      if(u.stuckTicks>state.constants.RES_STUCK_TICKS && u.target && (u.target.type==="tree" || u.target.type==="rock") && u.carry===0){
+        u.avoidTarget = {type:u.target.type, id:u.target.id};
+        u.avoidUntilTick = state.tickCount + state.constants.RES_AVOID_TICKS;
+        u.stuckTicks=0;
+        u.path=[];
+        u.intent=null;
+        u.state="Idle";
+        u.target=null;
+        return;
+      }
       if(u.stuckTicks>16){
         u.stuckTicks=0;
         if(u.path && u.path.length){
