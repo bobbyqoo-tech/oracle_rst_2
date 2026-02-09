@@ -3,7 +3,7 @@ import { state } from "./state.js";
 import {
   idx, xOf, yOf, inBounds, manhattan, cheb,
   distToBuilding, isAdjacentToBuilding, distToNearestBuilding,
-  drawFogTile, drawFogAll, drawBaseAll, eraseTileToBackground, drawMeatTile,
+  drawFogTile, drawFogAll, drawBaseAll, eraseTileToBackground, drawMeatTile, buildRings,
   updateVisibilityAndFogLayers,
   isWalkableTile, canMoveDiag,
   rebuildOccupancy,
@@ -166,6 +166,7 @@ function requestMoveToStorageLogic(u){
 
   const dropI=reserveTileFromList(u.id, b.dropTiles, state.dropReservedBy);
   if(dropI!==-1){
+    u.dropTileI=dropI;
     if(u.parkTileI!=null){ releaseReservation(u.id, state.parkTiles, state.parkReservedBy); u.parkTileI=null; }
     u.intent="ToStorage";
     requestPath(u.id, dropI);
@@ -175,6 +176,7 @@ function requestMoveToStorageLogic(u){
 
   const parkI=reserveTileFromList(u.id, b.parkTiles, state.parkReservedBy);
   if(parkI!==-1){
+    u.parkTileI=parkI;
     u.intent="ToPark";
     requestPath(u.id, parkI);
     u.state="ToPark";
@@ -209,9 +211,9 @@ function requestFlee(u){
   if(!b) return;
   u.storageTargetId=b.id;
   const parkI=reserveTileFromList(u.id, b.parkTiles, state.parkReservedBy);
-  if(parkI!==-1){ u.intent="ToPark"; requestPath(u.id, parkI); u.state="ToPark"; return; }
+  if(parkI!==-1){ u.parkTileI=parkI; u.intent="ToPark"; requestPath(u.id, parkI); u.state="ToPark"; return; }
   const dropI=reserveTileFromList(u.id, b.dropTiles, state.dropReservedBy);
-  if(dropI!==-1){ u.intent="ToStorage"; requestPath(u.id, dropI); u.state="ToStorage"; return; }
+  if(dropI!==-1){ u.dropTileI=dropI; u.intent="ToStorage"; requestPath(u.id, dropI); u.state="ToStorage"; return; }
   u.state="QueueStorage";
   u.nextDropRetryTick=state.tickCount + Math.max(6,(state.TICK_HZ/2)|0);
 }
@@ -593,11 +595,12 @@ function tickWorker(u){
       const b=state.buildings.find(bb=>bb.id===u.storageTargetId) || pickNearestBuilding(u, getCandidateBuildingsForRole(u.role));
       const dropI=b ? reserveTileFromList(u.id, b.dropTiles, state.dropReservedBy) : -1;
       if(dropI!==-1){
+        u.dropTileI=dropI;
         if(u.parkTileI!=null){ releaseReservation(u.id, state.parkTiles, state.parkReservedBy); u.parkTileI=null; }
         u.intent="ToStorage"; requestPath(u.id, dropI); u.state="ToStorage";
       } else if(u.state==="QueueStorage"){
         const parkI=b ? reserveTileFromList(u.id, b.parkTiles, state.parkReservedBy) : -1;
-        if(parkI!==-1){ u.intent="ToPark"; requestPath(u.id, parkI); u.state="ToPark"; }
+        if(parkI!==-1){ u.parkTileI=parkI; u.intent="ToPark"; requestPath(u.id, parkI); u.state="ToPark"; }
         else {
           const freeI=b ? pickFreeTileFromList(u, b.parkTiles) : -1;
           if(freeI!==-1){ u.intent="ToPark"; requestPath(u.id, freeI); u.state="ToPark"; }
