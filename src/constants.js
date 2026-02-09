@@ -45,6 +45,8 @@ export const constants = {
   DEFAULT_HP_SCOUT: 8,
   DEFAULT_ANIMAL_HP: 18,
 
+  AGES: ["Ancient", "Classical", "Medieval"],
+
   DIRS8: [
     { dx: 1, dy: 0, c: 1 }, { dx: -1, dy: 0, c: 1 }, { dx: 0, dy: 1, c: 1 }, { dx: 0, dy: -1, c: 1 },
     { dx: 1, dy: 1, c: Math.SQRT2 }, { dx: 1, dy: -1, c: Math.SQRT2 }, { dx: -1, dy: 1, c: Math.SQRT2 }, { dx: -1, dy: -1, c: Math.SQRT2 },

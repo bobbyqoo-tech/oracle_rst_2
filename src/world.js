@@ -423,6 +423,15 @@ function generate(params){
   state.HP_HUNTER=params.hpHunter;
   state.HP_SCOUT=params.hpScout;
   state.ANIMAL_HP=params.hpAnimal;
+  state.chopRate=state.constants.CHOP_RATE;
+  state.mineRate=state.constants.MINE_RATE;
+  state.ageIndex=0;
+  state.techs.logging=false;
+  state.techs.doubleAxe=false;
+  state.techs.bowSaw=false;
+  state.techs.digging=false;
+  state.techs.bronze=false;
+  state.techs.casting=false;
 
   resizeCanvases();
 

@@ -14,6 +14,21 @@ state.dom.logEl=document.getElementById("log");
 state.dom.infoEl=document.getElementById("info");
 state.dom.statusTag=document.getElementById("statusTag");
 state.dom.hpAllEl=document.getElementById("hpAll");
+const ageTag=document.getElementById("ageTag");
+const ageUpBtn=document.getElementById("ageUp");
+const ageCostEl=document.getElementById("ageCost");
+const techLogBtn=document.getElementById("techLog");
+const techDoubleAxeBtn=document.getElementById("techDoubleAxe");
+const techBowSawBtn=document.getElementById("techBowSaw");
+const techDigBtn=document.getElementById("techDig");
+const techBronzeBtn=document.getElementById("techBronze");
+const techCastingBtn=document.getElementById("techCasting");
+const costLogEl=document.getElementById("costLog");
+const costDoubleAxeEl=document.getElementById("costDoubleAxe");
+const costBowSawEl=document.getElementById("costBowSaw");
+const costDigEl=document.getElementById("costDig");
+const costBronzeEl=document.getElementById("costBronze");
+const costCastingEl=document.getElementById("costCasting");
 
 const inpLumber=document.getElementById("inpLumber");
 const inpMiner=document.getElementById("inpMiner");
@@ -42,7 +57,96 @@ const btnStep=document.getElementById("step");
 const btnClear=document.getElementById("clearlog");
 btnClear.onclick=()=> (state.dom.logEl.textContent="");
 
+ageUpBtn.onclick=()=>{
+  if(!state.grid){ log("請先按「生成地圖」。"); return; }
+  if(state.ageIndex>=state.constants.AGES.length-1) return;
+  const c=AGE_COSTS[state.ageIndex];
+  if(!canAfford(c)) return;
+  spend(c);
+  state.ageIndex++;
+  log(`時代提升：${state.constants.AGES[state.ageIndex]}`);
+  updateInfo();
+};
+
+function researchTech(id){
+  const t=TECHS[id];
+  if(state.techs[id]) return;
+  if(state.ageIndex < t.reqAge) return;
+  if(t.prereq && !state.techs[t.prereq]) return;
+  if(!canAfford(t.cost)) return;
+  spend(t.cost);
+  state.techs[id]=true;
+  t.apply();
+  log(`研發完成：${t.name}`);
+  updateInfo();
+}
+
+techLogBtn.onclick=()=>researchTech("logging");
+techDoubleAxeBtn.onclick=()=>researchTech("doubleAxe");
+techBowSawBtn.onclick=()=>researchTech("bowSaw");
+techDigBtn.onclick=()=>researchTech("digging");
+techBronzeBtn.onclick=()=>researchTech("bronze");
+techCastingBtn.onclick=()=>researchTech("casting");
+
 function clampInt(v,lo,hi,f){ const n=Number(v); if(!Number.isFinite(n)) return f; return Math.max(lo,Math.min(hi,Math.floor(n))); }
+
+const AGE_COSTS=[
+  { wood:200, ore:150, food:80 },
+  { wood:400, ore:300, food:160 },
+];
+const TECHS={
+  logging:{ name:"伐木", cost:{wood:80, ore:30, food:20}, reqAge:0, prereq:null, apply:()=>{ state.chopRate*=1.25; } },
+  doubleAxe:{ name:"雙面斧", cost:{wood:140, ore:80, food:40}, reqAge:1, prereq:"logging", apply:()=>{ state.chopRate*=1.30; } },
+  bowSaw:{ name:"弓形鉅", cost:{wood:220, ore:140, food:60}, reqAge:2, prereq:"doubleAxe", apply:()=>{ state.chopRate*=1.35; } },
+  digging:{ name:"挖掘", cost:{wood:70, ore:80, food:20}, reqAge:0, prereq:null, apply:()=>{ state.mineRate*=1.25; } },
+  bronze:{ name:"青銅術", cost:{wood:130, ore:160, food:50}, reqAge:1, prereq:"digging", apply:()=>{ state.mineRate*=1.30; } },
+  casting:{ name:"鑄造技術", cost:{wood:220, ore:240, food:80}, reqAge:2, prereq:"bronze", apply:()=>{ state.mineRate*=1.35; } },
+};
+
+function costText(c){ return `木${c.wood} / 礦${c.ore} / 食物${c.food}`; }
+function canAfford(c){ return state.storage.wood>=c.wood && state.storage.ore>=c.ore && state.storage.food>=c.food; }
+function spend(c){ state.storage.wood-=c.wood; state.storage.ore-=c.ore; state.storage.food-=c.food; }
+
+function refreshTechUI(){
+  if(!ageTag || !ageUpBtn) return;
+  ageTag.textContent = state.constants.AGES[state.ageIndex];
+  const maxAge = state.constants.AGES.length-1;
+  if(!state.grid){
+    ageUpBtn.disabled=true;
+    ageCostEl.textContent = "";
+  } else if(state.ageIndex>=maxAge){
+    ageUpBtn.disabled=true;
+    ageCostEl.textContent = "已達最高時代";
+  } else {
+    const c=AGE_COSTS[state.ageIndex];
+    ageCostEl.textContent = `需求：${costText(c)}`;
+    ageUpBtn.disabled = !canAfford(c);
+  }
+
+  function updateTech(btn, costEl, id){
+    const t=TECHS[id];
+    const researched=state.techs[id];
+    const blockedAge = state.ageIndex < t.reqAge;
+    const blockedPre = t.prereq && !state.techs[t.prereq];
+    const blockedRes = !canAfford(t.cost);
+    let status="";
+    if(researched) status="已研發";
+    else if(blockedAge) status=`需${state.constants.AGES[t.reqAge]}`;
+    else if(blockedPre) status=`需先研發${TECHS[t.prereq].name}`;
+    else if(blockedRes) status="資源不足";
+    costEl.textContent = `需求：${costText(t.cost)}${status?`（${status}）`:""}`;
+    btn.disabled = !state.grid || researched || blockedAge || blockedPre || blockedRes;
+  }
+
+  updateTech(techLogBtn, costLogEl, "logging");
+  updateTech(techDoubleAxeBtn, costDoubleAxeEl, "doubleAxe");
+  updateTech(techBowSawBtn, costBowSawEl, "bowSaw");
+  updateTech(techDigBtn, costDigEl, "digging");
+  updateTech(techBronzeBtn, costBronzeEl, "bronze");
+  updateTech(techCastingBtn, costCastingEl, "casting");
+}
+
+state.refreshTechUI = refreshTechUI;
 
 function readParams(){
   return {
@@ -81,6 +185,7 @@ btnGen.onclick=()=>{
   setStatus("READY");
   log(`生成完成：工人(含獵人)=${state.workers.length} 斥侯=${state.scouts.length} 動物=${state.animals.length}`);
   updateInfo();
+  refreshTechUI();
   render();
 };
 
@@ -153,5 +258,6 @@ state.ctx.fillStyle="#111"; state.ctx.fillRect(0,0,state.canvas.width,state.canv
 log("v7：獵人/野生動物/血量/逃跑。先調參數→生成地圖→開始。");
 setStatus("READY");
 updateInfo();
+refreshTechUI();
 requestAnimationFrame(raf);
 

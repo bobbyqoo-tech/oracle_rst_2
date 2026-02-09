@@ -23,6 +23,18 @@ export const state = {
   HP_HUNTER: constants.DEFAULT_HP_HUNTER,
   HP_SCOUT: constants.DEFAULT_HP_SCOUT,
   ANIMAL_HP: constants.DEFAULT_ANIMAL_HP,
+  chopRate: constants.CHOP_RATE,
+  mineRate: constants.MINE_RATE,
+
+  ageIndex: 0,
+  techs: {
+    logging: false,
+    doubleAxe: false,
+    bowSaw: false,
+    digging: false,
+    bronze: false,
+    casting: false,
+  },
 
   grid: null,
   occupied: null,

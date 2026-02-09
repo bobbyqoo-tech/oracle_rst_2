@@ -62,6 +62,7 @@ function updateInfo(){
       <div><b>動物</b>：存活<b>${aliveAnimals}</b> / ${state.animals?state.animals.length:0}</div>
       <div><b>單位</b>：總數 ${state.units?state.units.length:0}　工人/獵人 ${state.workers?state.workers.length:0}　斥侯 ${state.scouts?state.scouts.length:0}</div>
       <div><b>參數</b>：tick ${state.TICK_HZ}Hz　抽樣K=${state.SAMPLE_K}　格像素=${state.TILEPX}px　逃跑<20%</div>
+      <div><b>時代</b>：${state.constants.AGES[state.ageIndex]}　<b>伐木效率</b> x${state.chopRate.toFixed(2)}　<b>採礦效率</b> x${state.mineRate.toFixed(2)}</div>
     </div>
   `;
 
@@ -76,6 +77,8 @@ function updateInfo(){
     }
     state.dom.hpAllEl.textContent = rows.length ? rows.join("\n") : "(無單位)";
   }
+
+  if(state.refreshTechUI) state.refreshTechUI();
 }
 function requestMoveToResource(u,target){
   if(target.type==="tree"){
@@ -488,7 +491,7 @@ function tickWorker(u){
       u.progress += state.STEP_TIME;
       while(u.progress>=1.0 && u.carry<state.constants.WORKER_CARRY_CAP && res.amt>0){
         u.progress -= 1.0;
-        const take=Math.min(state.constants.CHOP_RATE, res.amt, state.constants.WORKER_CARRY_CAP-u.carry);
+        const take=Math.min(state.chopRate, res.amt, state.constants.WORKER_CARRY_CAP-u.carry);
         res.amt-=take; u.carry+=take;
       }
       if(res.amt<=0){
@@ -513,7 +516,7 @@ function tickWorker(u){
       u.progress += state.STEP_TIME;
       while(u.progress>=1.0 && u.carry<state.constants.WORKER_CARRY_CAP && res.amt>0){
         u.progress -= 1.0;
-        const take=Math.min(state.constants.MINE_RATE, res.amt, state.constants.WORKER_CARRY_CAP-u.carry);
+        const take=Math.min(state.mineRate, res.amt, state.constants.WORKER_CARRY_CAP-u.carry);
         res.amt-=take; u.carry+=take;
       }
       if(res.amt<=0){

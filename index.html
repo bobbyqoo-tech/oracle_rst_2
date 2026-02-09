@@ -17,6 +17,7 @@
     .row input{width:96px;background:#0f0f0f;color:#eee;border:1px solid #333;padding:6px 8px;border-radius:6px;}
     button{background:#222;color:#eee;border:1px solid #333;padding:6px 10px;border-radius:6px;cursor:pointer;}
     button:hover{background:#2a2a2a;}
+    button:disabled{background:#111;color:#666;border-color:#222;cursor:not-allowed;}
     .tag{display:inline-block;padding:1px 6px;border:1px solid #333;border-radius:999px;font-size:11px;color:#bbb;}
     .divider{height:1px;background:#1f1f1f;margin:10px 0;}
     .kv{font-size:13px;line-height:1.45;}
@@ -87,6 +88,26 @@
       <span class="tag" id="statusTag">READY</span>
     </div>
 
+    <div class="divider"></div>
+    <h2>科技樹</h2>
+    <div class="row" style="margin-bottom:6px;">
+      <span class="tag" id="ageTag">Ancient</span>
+      <button id="ageUp">升級時代</button>
+      <span class="small" id="ageCost"></span>
+    </div>
+    <div class="small">伐木科技</div>
+    <div class="row" style="margin-bottom:6px;">
+      <button id="techLog">伐木</button><span class="small" id="costLog"></span>
+      <button id="techDoubleAxe">雙面斧</button><span class="small" id="costDoubleAxe"></span>
+      <button id="techBowSaw">弓形鉅</button><span class="small" id="costBowSaw"></span>
+    </div>
+    <div class="small">採礦科技</div>
+    <div class="row" style="margin-bottom:6px;">
+      <button id="techDig">挖掘</button><span class="small" id="costDig"></span>
+      <button id="techBronze">青銅術</button><span class="small" id="costBronze"></span>
+      <button id="techCasting">鑄造技術</button><span class="small" id="costCasting"></span>
+    </div>
+
     <div class="kv" id="info"></div>
     <div class="small">事件訊息</div>
     <div class="log" id="log"></div>
@@ -96,4 +117,3 @@
 <script type="module" src="src/main.js"></script>
 </body>
 </html>
-
