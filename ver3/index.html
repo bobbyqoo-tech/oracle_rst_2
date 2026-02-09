@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mini RTS - Lumber MVP v2 (Clusters, Obstacles, Diagonals)</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Arial, "Noto Sans TC", sans-serif; }
+    .wrap { display: grid; grid-template-columns: auto 400px; height: 100vh; }
+    canvas { background: #111; image-rendering: pixelated; }
+    .panel { background:#0b0b0b; color:#ddd; padding:12px; overflow:auto; border-left:1px solid #222; }
+    .panel h2 { margin: 0 0 8px; font-size: 16px; }
+    .kv { font-size: 13px; line-height: 1.5; }
+    .kv b { color: #fff; }
+    .hint { font-size: 12px; color:#aaa; margin: 10px 0; }
+    .log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; white-space: pre-wrap; background:#070707; border:1px solid #222; padding:8px; border-radius:6px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .row input { width: 92px; background:#0f0f0f; color:#eee; border:1px solid #333; padding:6px 8px; border-radius:6px; }
+    .row label { font-size:12px; color:#bbb; display:flex; gap:6px; align-items:center; }
+    button { background:#222; color:#eee; border:1px solid #333; padding:6px 10px; border-radius:6px; cursor:pointer; }
+    button:hover { background:#2a2a2a; }
+    .small { font-size: 12px; color:#aaa; margin: 8px 0 6px; }
+    .divider { height:1px; background:#1f1f1f; margin:10px 0; }
+    .tag { display:inline-block; padding:1px 6px; border:1px solid #333; border-radius:999px; font-size:11px; color:#bbb; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c"></canvas>
+
+  <div class="panel">
+    <h2>Mini RTS：伐木 MVP v2（樹群 + 地形障礙 + 斜向移動）</h2>
+    <div class="hint">
+      - <b>不再限制一棵樹只能一個工人</b>：多個工人可同時砍同一棵樹（最多受限於可站位置）。<br/>
+      - 加入<b>地形障礙</b>（灰色）與<b>樹群生成</b>。<br/>
+      - A* 改成<b>八方向</b>移動（含斜走），路徑不再怪怪「先水平再垂直」。<br/>
+      操作：<b>點樹</b>可設為「偏好目標」讓閒置工人更傾向去那一區；不點也會自動分配直到砍完。
+    </div>
+
+    <div class="row" style="margin:6px 0 8px;">
+      <label>伐木工數量 <input id="inpWorkers" type="number" min="1" max="300" value="12"/></label>
+      <label>樹木數量 <input id="inpTrees" type="number" min="1" max="4000" value="400"/></label>
+      <label>障礙密度(%) <input id="inpObs" type="number" min="0" max="40" value="8"/></label>
+      <button id="start">開始/重生</button>
+    </div>
+
+    <div class="row" style="margin-bottom:6px;">
+      <button id="pause">暫停</button>
+      <button id="step">單步</button>
+      <button id="clearlog">清除訊息</button>
+      <span class="tag" id="statusTag">RUN</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="kv" id="info"></div>
+    <div class="small">事件訊息</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ======== World / Visuals ========
+  const W = 100, H = 100;
+  const TILE = 7;
+  const CANVAS_W = W * TILE;
+  const CANVAS_H = H * TILE;
+
+  // ======== Gameplay ========
+  const TREE_WOOD_MIN = 18;
+  const TREE_WOOD_MAX = 55;
+
+  const WORKER_CARRY_CAP = 10;
+  const CHOP_RATE = 1;         // wood per second
+  const STEP_TIME = 1/20;      // 20 Hz sim
+  const MOVE_EVERY_TICKS = 1;
+
+  // Target assignment tuning
+  const LOAD_PENALTY = 4.0;    // higher => workers spread out more; lower => more pile onto same tree
+  const REPLAN_EVERY_TICKS = 10; // periodic replan to keep things smooth
+
+  // ======== Canvas ========
+  const canvas = document.getElementById("c");
+  canvas.width = CANVAS_W;
+  canvas.height = CANVAS_H;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  // ======== UI ========
+  const infoEl = document.getElementById("info");
+  const logEl = document.getElementById("log");
+  const btnStart = document.getElementById("start");
+  const btnPause = document.getElementById("pause");
+  const btnStep = document.getElementById("step");
+  const btnClear = document.getElementById("clearlog");
+  const statusTag = document.getElementById("statusTag");
+  const inpWorkers = document.getElementById("inpWorkers");
+  const inpTrees = document.getElementById("inpTrees");
+  const inpObs = document.getElementById("inpObs");
+
+  function clampInt(v, lo, hi, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(lo, Math.min(hi, Math.floor(n)));
+  }
+
+  function log(msg) {
+    const t = new Date();
+    const hh = String(t.getHours()).padStart(2, "0");
+    const mm = String(t.getMinutes()).padStart(2, "0");
+    const ss = String(t.getSeconds()).padStart(2, "0");
+    logEl.textContent = `[${hh}:${mm}:${ss}] ${msg}\n` + logEl.textContent;
+  }
+  btnClear.onclick = () => (logEl.textContent = "");
+
+  // ======== World ========
+  const Tile = { Empty: 0, Block: 1 };
+  let grid;          // Uint8Array
+  let trees;         // {id,x,y,wood}
+  let storage;       // {x,y,totalWood}
+  let workers;       // Worker[]
+  let running = true;
+  let tickCount = 0;
+  let userPreferredTreeId = null;
+
+  const idx = (x,y) => y*W + x;
+  const inBounds = (x,y) => x>=0 && x<W && y>=0 && y<H;
+
+  function treeAlive(tr) { return tr && tr.wood > 0; }
+  function treeById(id) { return trees.find(t => t.id === id) || null; }
+
+  function isBlocked(x,y) {
+    if (!inBounds(x,y)) return true;
+    return grid[idx(x,y)] === Tile.Block;
+  }
+
+  function isWalkable(x,y) {
+    if (!inBounds(x,y)) return false;
+    if (grid[idx(x,y)] === Tile.Block) return false;
+    // cannot stand on a live tree tile
+    for (const tr of trees) if (tr.wood > 0 && tr.x===x && tr.y===y) return false;
+    return true;
+  }
+
+  function manhattan(ax,ay,bx,by) { return Math.abs(ax-bx) + Math.abs(ay-by); }
+
+  // ======== 8-dir A* ========
+  const DIRS8 = [
+    {dx: 1, dy: 0, c: 1},{dx:-1, dy: 0, c: 1},{dx: 0, dy: 1, c: 1},{dx: 0, dy:-1, c: 1},
+    {dx: 1, dy: 1, c: Math.SQRT2},{dx: 1, dy:-1, c: Math.SQRT2},{dx:-1, dy: 1, c: Math.SQRT2},{dx:-1, dy:-1, c: Math.SQRT2},
+  ];
+
+  function octileHeuristic(ax,ay,bx,by){
+    const dx = Math.abs(ax-bx), dy = Math.abs(ay-by);
+    const F = Math.SQRT2 - 1;
+    return (dx < dy) ? F*dx + dy : F*dy + dx;
+  }
+
+  function canMoveDiag(x,y,nx,ny) {
+    // Prevent "cutting corners": for diagonal move, both adjacent cardinals must be walkable-ish
+    const dx = nx - x, dy = ny - y;
+    if (Math.abs(dx)===1 && Math.abs(dy)===1) {
+      if (!isWalkable(x+dx, y) || !isWalkable(x, y+dy)) return false;
+    }
+    return true;
+  }
+
+  function astar(start, goal) {
+    if (!inBounds(start.x,start.y) || !inBounds(goal.x,goal.y)) return null;
+
+    const key = (x,y)=> `${x},${y}`;
+    const open = [];
+    const openMap = new Map();
+    const cameFrom = new Map();
+    const gScore = new Map();
+
+    const sk = key(start.x,start.y);
+    gScore.set(sk, 0);
+    const sNode = {x:start.x,y:start.y,g:0,f:octileHeuristic(start.x,start.y,goal.x,goal.y)};
+    open.push(sNode);
+    openMap.set(sk, sNode);
+
+    function popLowestF(){
+      let bi = 0;
+      for (let i=1;i<open.length;i++) if (open[i].f < open[bi].f) bi = i;
+      const n = open.splice(bi,1)[0];
+      openMap.delete(key(n.x,n.y));
+      return n;
+    }
+
+    while (open.length) {
+      const cur = popLowestF();
+      if (cur.x===goal.x && cur.y===goal.y) {
+        const path = [{x:cur.x,y:cur.y}];
+        let ck = key(cur.x,cur.y);
+        while (cameFrom.has(ck)) {
+          const p = cameFrom.get(ck);
+          path.push(p);
+          ck = key(p.x,p.y);
+        }
+        path.reverse();
+        path.shift();
+        return path;
+      }
+
+      const ck = key(cur.x,cur.y);
+      const curG = gScore.get(ck);
+
+      for (const d of DIRS8) {
+        const nx = cur.x + d.dx;
+        const ny = cur.y + d.dy;
+        if (!isWalkable(nx,ny)) continue;
+        if (!canMoveDiag(cur.x,cur.y,nx,ny)) continue;
+
+        const nk = key(nx,ny);
+        const tentative = curG + d.c;
+
+        const prev = gScore.has(nk) ? gScore.get(nk) : Infinity;
+        if (tentative < prev) {
+          cameFrom.set(nk, {x:cur.x,y:cur.y});
+          gScore.set(nk, tentative);
+          const f = tentative + octileHeuristic(nx,ny,goal.x,goal.y);
+
+          if (!openMap.has(nk)) {
+            const nn = {x:nx,y:ny,g:tentative,f};
+            open.push(nn);
+            openMap.set(nk, nn);
+          } else {
+            const nn = openMap.get(nk);
+            nn.g = tentative;
+            nn.f = f;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function adjacentTilesToTree(tree) {
+    // allow 8-neighborhood for standing positions (more realistic with diagonal movement)
+    const a = [];
+    for (let dy=-1; dy<=1; dy++){
+      for (let dx=-1; dx<=1; dx++){
+        if (dx===0 && dy===0) continue;
+        const x = tree.x + dx, y = tree.y + dy;
+        if (isWalkable(x,y)) a.push({x,y});
+      }
+    }
+    return a;
+  }
+
+  function bestAdjacentForWorker(tree, w) {
+    const c = adjacentTilesToTree(tree);
+    if (!c.length) return null;
+    c.sort((p,q)=>manhattan(p.x,p.y,w.x,w.y)-manhattan(q.x,q.y,w.x,w.y));
+    return c[0];
+  }
+
+  // ======== Worker ========
+  function makeWorker(id, x, y) {
+    return { id, x, y, carry: 0, state: "Idle", targetTreeId: null, path: [], chopProgress: 0, lastAction: "Idle" };
+  }
+
+  // Count how many workers currently targeting each tree
+  function buildTreeLoadMap() {
+    const load = new Map();
+    for (const w of workers) {
+      if (w.targetTreeId !== null) load.set(w.targetTreeId, (load.get(w.targetTreeId) || 0) + 1);
+    }
+    return load;
+  }
+
+  function chooseTreeForWorker(w, loadMap) {
+    // keep if still alive
+    if (w.targetTreeId !== null) {
+      const tr = treeById(w.targetTreeId);
+      if (treeAlive(tr)) return w.targetTreeId;
+      w.targetTreeId = null;
+    }
+
+    // candidate list
+    let bestId = null;
+    let bestScore = Infinity;
+
+    // prefer clicked tree by lowering its score
+    const pref = (userPreferredTreeId !== null) ? treeById(userPreferredTreeId) : null;
+
+    for (const tr of trees) {
+      if (!treeAlive(tr)) continue;
+
+      const stand = bestAdjacentForWorker(tr, w);
+      if (!stand) continue; // no place to stand -> can't work it now
+
+      const d = manhattan(w.x,w.y,tr.x,tr.y);
+
+      const load = loadMap.get(tr.id) || 0;
+      let score = d + LOAD_PENALTY * load;
+
+      if (pref && pref.id === tr.id) score *= 0.3; // strong preference
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestId = tr.id;
+      }
+    }
+
+    return bestId;
+  }
+
+  function planToTree(w, loadMap) {
+    const tid = chooseTreeForWorker(w, loadMap);
+    if (tid === null) {
+      w.state = "Idle";
+      w.path = [];
+      w.targetTreeId = null;
+      w.lastAction = "Idle (no targets)";
+      return;
+    }
+
+    const tr = treeById(tid);
+    if (!treeAlive(tr)) {
+      w.state = "Idle";
+      w.targetTreeId = null;
+      w.path = [];
+      return;
+    }
+
+    w.targetTreeId = tid;
+    const stand = bestAdjacentForWorker(tr, w);
+    if (!stand) {
+      w.state = "Idle";
+      w.path = [];
+      w.lastAction = "Blocked near tree";
+      w.targetTreeId = null;
+      return;
+    }
+
+    const path = astar({x:w.x,y:w.y}, stand);
+    if (!path) {
+      w.state = "Idle";
+      w.path = [];
+      w.lastAction = "No path to tree";
+      w.targetTreeId = null;
+      return;
+    }
+
+    w.path = path;
+    w.state = "ToTree";
+    w.lastAction = `ToTree #${w.targetTreeId}`;
+  }
+
+  function planToStorage(w) {
+    const path = astar({x:w.x,y:w.y}, {x:storage.x,y:storage.y});
+    if (!path) {
+      w.state = "Idle";
+      w.path = [];
+      w.lastAction = "No path to storage";
+      return;
+    }
+    w.path = path;
+    w.state = "ToStorage";
+    w.lastAction = "ToStorage";
+  }
+
+  // ======== Generation: Obstacles ========
+  function addObstaclePatches(percent) {
+    // percent of tiles to turn into obstacles (roughly)
+    const target = Math.floor(W*H * (percent/100));
+    let added = 0;
+
+    // 1) add a few rectangles (clusters)
+    const rects = Math.max(3, Math.floor(percent/2));
+    for (let r=0;r<rects;r++){
+      const rw = 6 + Math.floor(Math.random()*18);
+      const rh = 4 + Math.floor(Math.random()*14);
+      const x0 = Math.floor(Math.random()*(W-rw));
+      const y0 = Math.floor(Math.random()*(H-rh));
+      for (let y=y0;y<y0+rh;y++){
+        for (let x=x0;x<x0+rw;x++){
+          if (grid[idx(x,y)]!==Tile.Block) { grid[idx(x,y)]=Tile.Block; added++; }
+        }
+      }
+    }
+
+    // 2) sprinkle single blocks until near target
+    let guard = 0;
+    while (added < target && guard < 300000) {
+      guard++;
+      const x = Math.floor(Math.random()*W);
+      const y = Math.floor(Math.random()*H);
+      if (grid[idx(x,y)]===Tile.Block) continue;
+      grid[idx(x,y)] = Tile.Block;
+      added++;
+    }
+
+    return added;
+  }
+
+  // ======== Generation: Tree Clusters ========
+  function spawnTreesClustered(treeCount, occupiedSet) {
+    trees = [];
+    const clusters = Math.max(4, Math.floor(Math.sqrt(treeCount)/1.2));
+    const centers = [];
+
+    // choose cluster centers away from storage
+    let tries = 0;
+    while (centers.length < clusters && tries < 200000) {
+      tries++;
+      const x = Math.floor(Math.random()*W);
+      const y = Math.floor(Math.random()*H);
+      if (occupiedSet.has(`${x},${y}`)) continue;
+      if (isBlocked(x,y)) continue;
+      if (manhattan(x,y,storage.x,storage.y) < 10) continue;
+      centers.push({x,y});
+    }
+
+    const used = new Set();
+    function placeTree(x,y){
+      const k = `${x},${y}`;
+      if (used.has(k)) return false;
+      if (occupiedSet.has(k)) return false;
+      if (!inBounds(x,y)) return false;
+      if (isBlocked(x,y)) return false;
+      used.add(k);
+      trees.push({
+        id: trees.length,
+        x, y,
+        wood: TREE_WOOD_MIN + Math.floor(Math.random()*(TREE_WOOD_MAX - TREE_WOOD_MIN + 1))
+      });
+      return true;
+    }
+
+    let placed = 0;
+    let guard2 = 0;
+    while (placed < treeCount && guard2 < 500000) {
+      guard2++;
+
+      const c = centers[Math.floor(Math.random()*centers.length)];
+      // sample around center with gaussian-ish radius
+      const r = Math.random() < 0.7 ? 6 : 12;
+      const ang = Math.random() * Math.PI * 2;
+      const rad = Math.abs((Math.random()+Math.random()+Math.random())/3) * r; // approx
+      let x = Math.round(c.x + Math.cos(ang)*rad);
+      let y = Math.round(c.y + Math.sin(ang)*rad);
+
+      // slight drift to make "blobs"
+      x += Math.floor((Math.random()-0.5)*2);
+      y += Math.floor((Math.random()-0.5)*2);
+
+      if (placeTree(x,y)) placed++;
+    }
+
+    // fallback: if clustered placement couldn't reach count, sprinkle randomly
+    let guard3 = 0;
+    while (placed < treeCount && guard3 < 300000) {
+      guard3++;
+      const x = Math.floor(Math.random()*W);
+      const y = Math.floor(Math.random()*H);
+      if (placeTree(x,y)) placed++;
+    }
+
+    return placed;
+  }
+
+  // ======== Spawn ========
+  function spawn(workerCount, treeCount, obsPercent) {
+    tickCount = 0;
+    userPreferredTreeId = null;
+
+    grid = new Uint8Array(W*H);
+    storage = { x: Math.floor(W/2), y: Math.floor(H/2), totalWood: 0 };
+
+    // obstacles first
+    const addedObs = addObstaclePatches(obsPercent);
+
+    // clear around storage to avoid trapping
+    for (let y=storage.y-2;y<=storage.y+2;y++){
+      for (let x=storage.x-2;x<=storage.x+2;x++){
+        if (inBounds(x,y)) grid[idx(x,y)] = Tile.Empty;
+      }
+    }
+
+    // spawn workers near storage (ensure walkable)
+    workers = [];
+    const occupied = new Set();
+    occupied.add(`${storage.x},${storage.y}`);
+
+    let id = 0;
+    for (let ring=1; id<workerCount && ring<20; ring++){
+      for (let dy=-ring; dy<=ring && id<workerCount; dy++){
+        for (let dx=-ring; dx<=ring && id<workerCount; dx++){
+          if (Math.abs(dx)!==ring && Math.abs(dy)!==ring) continue; // perimeter
+          const x = storage.x + dx;
+          const y = storage.y + dy;
+          if (!inBounds(x,y)) continue;
+          const k = `${x},${y}`;
+          if (occupied.has(k)) continue;
+          if (isBlocked(x,y)) continue;
+          // avoid placing on future tree - we'll record occupancy now
+          occupied.add(k);
+          workers.push(makeWorker(id, x, y));
+          id++;
+        }
+      }
+    }
+    while (workers.length < workerCount) {
+      // fallback stack near storage
+      const x = storage.x + 1, y = storage.y;
+      workers.push(makeWorker(workers.length, x, y));
+      occupied.add(`${x},${y}`);
+    }
+
+    // trees (clustered)
+    const placedTrees = spawnTreesClustered(treeCount, occupied);
+
+    log(`地圖已生成：工人=${workerCount}，樹=${placedTrees}（樹群），障礙約=${obsPercent}%（實際格數=${addedObs}）。`);
+    updateInfo();
+  }
+
+  // ======== Controls ========
+  btnStart.onclick = () => {
+    const wc = clampInt(inpWorkers.value, 1, 300, 12);
+    const tc = clampInt(inpTrees.value, 1, 4000, 400);
+    const oc = clampInt(inpObs.value, 0, 40, 8);
+    inpWorkers.value = wc; inpTrees.value = tc; inpObs.value = oc;
+    spawn(wc, tc, oc);
+  };
+
+  btnPause.onclick = () => {
+    running = !running;
+    btnPause.textContent = running ? "暫停" : "繼續";
+    statusTag.textContent = running ? "RUN" : "PAUSE";
+    log(running ? "繼續模擬" : "已暫停");
+  };
+
+  btnStep.onclick = () => {
+    if (running) return;
+    tick();
+    render();
+  };
+
+  canvas.addEventListener("click", (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = Math.floor((ev.clientX - rect.left) / TILE);
+    const my = Math.floor((ev.clientY - rect.top) / TILE);
+    if (!inBounds(mx,my)) return;
+
+    const tr = trees.find(t => t.wood > 0 && t.x===mx && t.y===my);
+    if (!tr) { log(`(點擊) 這裡不是樹：(${mx},${my})`); return; }
+
+    userPreferredTreeId = tr.id;
+    log(`偏好目標：樹#${tr.id} @(${tr.x},${tr.y})（閒置/重規劃時更傾向選它）`);
+  });
+
+  // ======== Simulation ========
+  function anyTreesLeft() {
+    for (const tr of trees) if (tr.wood > 0) return true;
+    return false;
+  }
+
+  function tickWorker(w, loadMap) {
+    function stepMove() {
+      if (!w.path || w.path.length === 0) return false;
+      const next = w.path.shift();
+      w.x = next.x; w.y = next.y;
+      return true;
+    }
+
+    // periodic replan to reduce "stuck on last tree" and improve flow
+    const shouldReplan = (tickCount % REPLAN_EVERY_TICKS === 0);
+
+    if (w.state === "Idle") {
+      planToTree(w, loadMap);
+      return;
+    }
+
+    if (w.state === "ToTree") {
+      if (tickCount % MOVE_EVERY_TICKS === 0) stepMove();
+      if (!w.path || w.path.length === 0) {
+        w.state = "Chop";
+        w.chopProgress = 0;
+        w.lastAction = `Chop #${w.targetTreeId}`;
+      } else if (shouldReplan && w.targetTreeId !== null) {
+        // if preferred changed or target too crowded, allow gentle replan
+        // (keeps things from becoming odd "queue" behavior)
+      }
+      return;
+    }
+
+    if (w.state === "Chop") {
+      const tr = treeById(w.targetTreeId);
+      if (!treeAlive(tr)) {
+        if (w.carry > 0) planToStorage(w);
+        else { w.targetTreeId = null; w.state = "Idle"; w.lastAction = "Idle (tree gone)"; }
+        return;
+      }
+
+      const adjacent = (Math.abs(w.x-tr.x) <= 1 && Math.abs(w.y-tr.y) <= 1 && !(w.x===tr.x && w.y===tr.y));
+      if (!adjacent) {
+        // got displaced or target changed; replan
+        w.targetTreeId = null;
+        w.state = "Idle";
+        w.lastAction = "Replan (not adjacent)";
+        return;
+      }
+
+      w.chopProgress += STEP_TIME;
+      while (w.chopProgress >= 1.0 && w.carry < WORKER_CARRY_CAP && tr.wood > 0) {
+        w.chopProgress -= 1.0;
+        const take = Math.min(CHOP_RATE, tr.wood, WORKER_CARRY_CAP - w.carry);
+        tr.wood -= take;
+        w.carry += take;
+      }
+
+      if (w.carry >= WORKER_CARRY_CAP) {
+        planToStorage(w);
+      } else if (tr.wood <= 0) {
+        if (w.carry > 0) planToStorage(w);
+        else { w.targetTreeId = null; w.state = "Idle"; }
+      } else if (shouldReplan) {
+        // if tree still has wood but very crowded, allow some workers to leave
+        // We approximate "crowded" by loadMap for this tree.
+        const load = loadMap.get(tr.id) || 1;
+        // If more than 6 workers are targeting same tree, some may peel off
+        if (load > 6 && Math.random() < 0.35) {
+          w.targetTreeId = null;
+          w.state = "Idle";
+          w.lastAction = "Peel off (crowded)";
+        }
+      }
+      return;
+    }
+
+    if (w.state === "ToStorage") {
+      if (tickCount % MOVE_EVERY_TICKS === 0) stepMove();
+      if (!w.path || w.path.length === 0) {
+        w.state = "Dropoff";
+        w.lastAction = "Dropoff";
+      }
+      return;
+    }
+
+    if (w.state === "Dropoff") {
+      if (w.x === storage.x && w.y === storage.y) {
+        if (w.carry > 0) { storage.totalWood += w.carry; w.carry = 0; }
+        w.targetTreeId = null;
+        w.state = "Idle";
+        w.lastAction = "Idle (after drop)";
+      } else {
+        planToStorage(w);
+      }
+      return;
+    }
+  }
+
+  function tick() {
+    tickCount++;
+
+    const loadMap = buildTreeLoadMap();
+    for (const w of workers) tickWorker(w, loadMap);
+
+    // finish condition
+    if (!anyTreesLeft()) {
+      let allIdle = true;
+      for (const w of workers) if (w.carry > 0 || w.state !== "Idle") { allIdle = false; break; }
+      if (allIdle && running) {
+        running = false;
+        btnPause.textContent = "繼續";
+        statusTag.textContent = "DONE";
+        log(`✅ 全圖樹已砍完。倉庫總木材=${storage.totalWood}`);
+      }
+    }
+
+    updateInfo();
+  }
+
+  // ======== Rendering ========
+  function render() {
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+
+    // Obstacles
+    ctx.fillStyle = "rgb(70,70,70)";
+    for (let y=0;y<H;y++){
+      for (let x=0;x<W;x++){
+        if (grid[idx(x,y)]===Tile.Block) {
+          ctx.fillRect(x*TILE, y*TILE, TILE, TILE);
+        }
+      }
+    }
+
+    // Trees
+    for (const tr of trees) {
+      if (tr.wood <= 0) continue;
+      const g = Math.floor(120 + Math.min(90, (tr.wood / TREE_WOOD_MAX) * 90));
+      ctx.fillStyle = `rgb(0,${g},0)`;
+      ctx.fillRect(tr.x*TILE, tr.y*TILE, TILE, TILE);
+    }
+
+    // Storage
+    ctx.fillStyle = "rgb(220,200,60)";
+    ctx.fillRect(storage.x*TILE, storage.y*TILE, TILE, TILE);
+
+    // Workers
+    for (const w of workers) {
+      const base = 80 + (w.id * 37) % 140;
+      ctx.fillStyle = `rgb(${base},160,255)`;
+      ctx.fillRect(w.x*TILE, w.y*TILE, TILE, TILE);
+
+      // show path dots for first 4 workers
+      if (w.id < 4 && w.path && w.path.length) {
+        ctx.fillStyle = "rgba(200,200,255,0.22)";
+        const s = Math.max(1, Math.floor(TILE/3));
+        for (const p of w.path) {
+          ctx.fillRect(p.x*TILE + Math.floor(TILE/3), p.y*TILE + Math.floor(TILE/3), s, s);
+        }
+      }
+    }
+
+    // preferred tree outline
+    if (userPreferredTreeId !== null) {
+      const tr = treeById(userPreferredTreeId);
+      if (tr && tr.wood > 0) {
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tr.x*TILE+0.5, tr.y*TILE+0.5, TILE-1, TILE-1);
+      }
+    }
+  }
+
+  function updateInfo() {
+    const aliveTrees = trees.reduce((acc,t)=>acc + (t.wood>0 ? 1 : 0), 0);
+    const working = workers.reduce((acc,w)=>acc + (w.state!=="Idle" ? 1 : 0), 0);
+    const carrying = workers.reduce((acc,w)=>acc + w.carry, 0);
+
+    const pref = (userPreferredTreeId!==null) ? treeById(userPreferredTreeId) : null;
+    const prefText = (pref && pref.wood>0) ? `樹#${pref.id} @(${pref.x},${pref.y}) wood=${pref.wood}` : "(無/已砍完)";
+
+    const lines = [];
+    const showN = Math.min(10, workers.length);
+    for (let i=0;i<showN;i++) {
+      const w = workers[i];
+      lines.push(`W${w.id}: (${w.x},${w.y}) ${w.state} carry=${w.carry}/${WORKER_CARRY_CAP} target=${w.targetTreeId ?? "-"}`);
+    }
+    if (workers.length > showN) lines.push(`... +${workers.length - showN} workers`);
+
+    infoEl.innerHTML = `
+      <div class="kv">
+        <div><b>世界</b>：${W}×${H}（8向移動）</div>
+        <div><b>倉庫</b>：(${storage.x},${storage.y})　總木材=<b>${storage.totalWood}</b>（無限大）</div>
+        <div><b>樹</b>：剩餘 <b>${aliveTrees}</b> / ${trees.length}</div>
+        <div><b>伐木工</b>：${workers.length}（工作中 ${working}）　總攜帶木材 ${carrying}</div>
+        <div>偏好目標：${prefText}</div>
+        <div class="divider"></div>
+        <div><b>伐木工狀態（前 ${showN} 名）</b></div>
+        <div style="white-space:pre; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace; font-size:12px; color:#cfcfcf;">${lines.join("\n")}</div>
+      </div>
+    `;
+  }
+
+  // ======== Main loop ========
+  function loop() {
+    if (running) tick();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ======== Start ========
+  spawn(clampInt(inpWorkers.value,1,300,12), clampInt(inpTrees.value,1,4000,400), clampInt(inpObs.value,0,40,8));
+  render();
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>

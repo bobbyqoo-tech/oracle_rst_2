@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mini RTS - Lumber MVP (Multi Workers)</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Arial, "Noto Sans TC", sans-serif; }
+    .wrap { display: grid; grid-template-columns: auto 380px; height: 100vh; }
+    canvas { background: #111; image-rendering: pixelated; }
+    .panel { background:#0b0b0b; color:#ddd; padding:12px; overflow:auto; border-left:1px solid #222; }
+    .panel h2 { margin: 0 0 8px; font-size: 16px; }
+    .kv { font-size: 13px; line-height: 1.5; }
+    .kv b { color: #fff; }
+    .hint { font-size: 12px; color:#aaa; margin: 10px 0; }
+    .log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; white-space: pre-wrap; background:#070707; border:1px solid #222; padding:8px; border-radius:6px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .row input { width: 90px; background:#0f0f0f; color:#eee; border:1px solid #333; padding:6px 8px; border-radius:6px; }
+    .row label { font-size:12px; color:#bbb; display:flex; gap:6px; align-items:center; }
+    button { background:#222; color:#eee; border:1px solid #333; padding:6px 10px; border-radius:6px; cursor:pointer; }
+    button:hover { background:#2a2a2a; }
+    .small { font-size: 12px; color:#aaa; margin: 8px 0 6px; }
+    .divider { height:1px; background:#1f1f1f; margin:10px 0; }
+    .tag { display:inline-block; padding:1px 6px; border:1px solid #333; border-radius:999px; font-size:11px; color:#bbb; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c"></canvas>
+
+  <div class="panel">
+    <h2>Mini RTS：伐木 MVP（多伐木工 + 自動砍到全圖沒樹）</h2>
+    <div class="hint">
+      操作：<b>點一棵樹</b>可指定「所有閒置伐木工」優先去處理該樹（其他人仍會自動去找別棵）。<br/>
+      若不點任何樹，伐木工會自動分配目標，直到地圖樹全砍完。
+    </div>
+
+    <div class="row" style="margin:6px 0 8px;">
+      <label>伐木工數量 <input id="inpWorkers" type="number" min="1" max="200" value="5"/></label>
+      <label>樹木數量 <input id="inpTrees" type="number" min="1" max="2000" value="120"/></label>
+      <button id="start">開始/重生</button>
+    </div>
+
+    <div class="row" style="margin-bottom:6px;">
+      <button id="pause">暫停</button>
+      <button id="step">單步</button>
+      <button id="clearlog">清除訊息</button>
+      <span class="tag" id="statusTag">RUN</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="kv" id="info"></div>
+    <div class="small">事件訊息</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ======== Config (world / visuals) ========
+  const W = 100, H = 100;          // world size in tiles
+  const TILE = 7;                  // pixels per tile
+  const CANVAS_W = W * TILE;
+  const CANVAS_H = H * TILE;
+
+  // Gameplay params
+  const TREE_WOOD_MIN = 20;
+  const TREE_WOOD_MAX = 45;
+
+  const WORKER_CARRY_CAP = 10;
+  const CHOP_RATE = 1;             // wood per second
+  const STEP_TIME = 1/20;          // simulation dt seconds per tick (20 Hz)
+  const MOVE_EVERY_TICKS = 1;      // tiles per tick; keep 1 for simple
+
+  // ======== Canvas init ========
+  const canvas = document.getElementById("c");
+  canvas.width = CANVAS_W;
+  canvas.height = CANVAS_H;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  // ======== UI ========
+  const infoEl = document.getElementById("info");
+  const logEl = document.getElementById("log");
+  const btnStart = document.getElementById("start");
+  const btnPause = document.getElementById("pause");
+  const btnStep = document.getElementById("step");
+  const btnClear = document.getElementById("clearlog");
+  const statusTag = document.getElementById("statusTag");
+  const inpWorkers = document.getElementById("inpWorkers");
+  const inpTrees = document.getElementById("inpTrees");
+
+  function clampInt(v, lo, hi, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(lo, Math.min(hi, Math.floor(n)));
+  }
+
+  function log(msg) {
+    const t = new Date();
+    const hh = String(t.getHours()).padStart(2, "0");
+    const mm = String(t.getMinutes()).padStart(2, "0");
+    const ss = String(t.getSeconds()).padStart(2, "0");
+    logEl.textContent = `[${hh}:${mm}:${ss}] ${msg}\n` + logEl.textContent;
+  }
+  btnClear.onclick = () => (logEl.textContent = "");
+
+  // ======== World data ========
+  const Tile = { Empty: 0, Block: 1 };
+
+  let grid;          // Uint8Array
+  let trees;         // array of {id,x,y,wood,reservedBy?}
+  let storage;       // {x,y,totalWood}
+  let workers;       // array of Worker
+  let running = true;
+  let tickCount = 0;
+  let userPreferredTreeId = null; // optional target preference from click
+
+  // ======== Helpers ========
+  const idx = (x,y) => y*W + x;
+  const inBounds = (x,y) => x>=0 && x<W && y>=0 && y<H;
+
+  function treeAlive(tr) { return tr && tr.wood > 0; }
+
+  function isWalkable(x,y) {
+    if (!inBounds(x,y)) return false;
+    // Trees are obstacles (can't stand on them)
+    for (const tr of trees) if (tr.wood > 0 && tr.x === x && tr.y === y) return false;
+    return grid[idx(x,y)] !== Tile.Block;
+  }
+
+  function manhattanXY(ax,ay,bx,by) {
+    return Math.abs(ax-bx) + Math.abs(ay-by);
+  }
+
+  // ======== A* Pathfinding (grid) ========
+  function astar(start, goal) {
+    if (!inBounds(start.x,start.y) || !inBounds(goal.x,goal.y)) return null;
+
+    const open = [];
+    const openMap = new Map(); // key -> node
+    const cameFrom = new Map();
+    const gScore = new Map();
+
+    const key = (p) => `${p.x},${p.y}`;
+    const startKey = key(start);
+    gScore.set(startKey, 0);
+
+    const startNode = { x:start.x, y:start.y, f: manhattanXY(start.x,start.y,goal.x,goal.y), g:0 };
+    open.push(startNode);
+    openMap.set(startKey, startNode);
+
+    const dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
+
+    function popLowestF() {
+      let bestI = 0;
+      for (let i=1;i<open.length;i++){
+        if (open[i].f < open[bestI].f) bestI = i;
+      }
+      const n = open.splice(bestI,1)[0];
+      openMap.delete(key(n));
+      return n;
+    }
+
+    while (open.length) {
+      const cur = popLowestF();
+      if (cur.x === goal.x && cur.y === goal.y) {
+        const path = [{x:cur.x,y:cur.y}];
+        let ck = key(cur);
+        while (cameFrom.has(ck)) {
+          const prev = cameFrom.get(ck);
+          path.push(prev);
+          ck = key(prev);
+        }
+        path.reverse();
+        path.shift(); // remove current position
+        return path;
+      }
+
+      const curKey = key(cur);
+      const curG = gScore.get(curKey);
+
+      for (const d of dirs) {
+        const nx = cur.x + d.dx;
+        const ny = cur.y + d.dy;
+        if (!isWalkable(nx,ny)) continue;
+
+        const nk = `${nx},${ny}`;
+        const tentative = curG + 1;
+        const prevG = gScore.has(nk) ? gScore.get(nk) : Infinity;
+        if (tentative < prevG) {
+          cameFrom.set(nk, {x:cur.x,y:cur.y});
+          gScore.set(nk, tentative);
+          const f = tentative + manhattanXY(nx,ny,goal.x,goal.y);
+
+          if (!openMap.has(nk)) {
+            const nn = {x:nx,y:ny,g:tentative,f};
+            open.push(nn);
+            openMap.set(nk, nn);
+          } else {
+            const nn = openMap.get(nk);
+            nn.g = tentative;
+            nn.f = f;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function adjacentTilesToTree(tree) {
+    return [
+      {x:tree.x+1,y:tree.y},{x:tree.x-1,y:tree.y},{x:tree.x,y:tree.y+1},{x:tree.x,y:tree.y-1}
+    ].filter(p => isWalkable(p.x,p.y));
+  }
+
+  function bestAdjacentToTreeForWorker(tree, worker) {
+    const candidates = adjacentTilesToTree(tree);
+    if (!candidates.length) return null;
+    candidates.sort((a,b)=>manhattanXY(a.x,a.y,worker.x,worker.y) - manhattanXY(b.x,b.y,worker.x,worker.y));
+    return candidates[0];
+  }
+
+  function treeById(id) {
+    return trees.find(t => t.id === id) || null;
+  }
+
+  function anyTreesLeft() {
+    for (const tr of trees) if (tr.wood > 0) return true;
+    return false;
+  }
+
+  // ======== Worker ========
+  function makeWorker(id, x, y) {
+    return {
+      id, x, y,
+      carry: 0,
+      state: "Idle",
+      targetTreeId: null,
+      path: [],
+      chopProgress: 0,
+      lastAction: "Idle"
+    };
+  }
+
+  // ======== Target assignment (auto) ========
+  // Pick a tree for a worker:
+  // - Prefer user's clicked tree if alive and not reserved by someone else (unless this worker already assigned)
+  // - Otherwise pick nearest alive & not-reserved tree
+  function chooseTreeForWorker(w) {
+    // Clean invalid
+    if (w.targetTreeId !== null) {
+      const tr = treeById(w.targetTreeId);
+      if (!treeAlive(tr)) w.targetTreeId = null;
+    }
+
+    // If already has a valid target, keep it
+    if (w.targetTreeId !== null) return w.targetTreeId;
+
+    // helper: is tree available
+    function available(tr) {
+      if (!treeAlive(tr)) return false;
+      // Allow if unreserved, or reserved by this worker
+      return (tr.reservedBy === null || tr.reservedBy === undefined || tr.reservedBy === w.id);
+    }
+
+    // 1) user preferred tree
+    if (userPreferredTreeId !== null) {
+      const pref = treeById(userPreferredTreeId);
+      if (pref && available(pref)) return pref.id;
+    }
+
+    // 2) nearest available tree
+    let best = null;
+    let bestD = Infinity;
+    for (const tr of trees) {
+      if (!available(tr)) continue;
+      const d = manhattanXY(w.x,w.y,tr.x,tr.y);
+      if (d < bestD) { bestD = d; best = tr; }
+    }
+    return best ? best.id : null;
+  }
+
+  function reserveTree(treeId, workerId) {
+    const tr = treeById(treeId);
+    if (!tr || tr.wood <= 0) return false;
+    if (tr.reservedBy === null || tr.reservedBy === undefined || tr.reservedBy === workerId) {
+      tr.reservedBy = workerId;
+      return true;
+    }
+    return false;
+  }
+
+  function unreserveTreeIfOwned(treeId, workerId) {
+    const tr = treeById(treeId);
+    if (!tr) return;
+    if (tr.reservedBy === workerId) tr.reservedBy = null;
+  }
+
+  // ======== Planning ========
+  function planToTree(w) {
+    const targetId = chooseTreeForWorker(w);
+    if (targetId === null) {
+      w.state = "Idle";
+      w.path = [];
+      w.targetTreeId = null;
+      w.lastAction = "Idle (no trees)";
+      return;
+    }
+
+    const tr = treeById(targetId);
+    if (!tr || tr.wood <= 0) {
+      w.targetTreeId = null;
+      w.state = "Idle";
+      return;
+    }
+
+    // Try reserve
+    if (!reserveTree(tr.id, w.id)) {
+      // someone else got it; try another next tick
+      w.targetTreeId = null;
+      w.state = "Idle";
+      return;
+    }
+
+    w.targetTreeId = tr.id;
+    const stand = bestAdjacentToTreeForWorker(tr, w);
+    if (!stand) {
+      w.state = "Idle";
+      w.path = [];
+      w.lastAction = "Blocked near tree";
+      unreserveTreeIfOwned(tr.id, w.id);
+      w.targetTreeId = null;
+      return;
+    }
+
+    const path = astar({x:w.x,y:w.y}, stand);
+    if (!path) {
+      w.state = "Idle";
+      w.path = [];
+      w.lastAction = "No path to tree";
+      unreserveTreeIfOwned(tr.id, w.id);
+      w.targetTreeId = null;
+      return;
+    }
+
+    w.path = path;
+    w.state = "ToTree";
+    w.lastAction = `ToTree #${w.targetTreeId}`;
+  }
+
+  function planToStorage(w) {
+    const path = astar({x:w.x,y:w.y}, {x:storage.x,y:storage.y});
+    if (!path) {
+      w.state = "Idle";
+      w.path = [];
+      w.lastAction = "No path to storage";
+      return;
+    }
+    w.path = path;
+    w.state = "ToStorage";
+    w.lastAction = "ToStorage";
+  }
+
+  // ======== Game setup ========
+  function spawn(workerCount, treeCount) {
+    tickCount = 0;
+    userPreferredTreeId = null;
+
+    grid = new Uint8Array(W*H);
+    trees = [];
+    storage = { x: Math.floor(W/2), y: Math.floor(H/2), totalWood: 0 };
+
+    // spawn workers in a small cluster near storage
+    workers = [];
+    const ring = Math.ceil(Math.sqrt(workerCount));
+    let wi = 0;
+    for (let dy=0; dy<ring && wi<workerCount; dy++) {
+      for (let dx=0; dx<ring && wi<workerCount; dx++) {
+        const x = storage.x + 2 + dx;
+        const y = storage.y + dy;
+        if (!inBounds(x,y)) continue;
+        workers.push(makeWorker(wi, x, y));
+        wi++;
+      }
+    }
+    // if still not enough (edge cases), just stack
+    while (workers.length < workerCount) {
+      workers.push(makeWorker(workers.length, storage.x+2, storage.y));
+    }
+
+    // place trees randomly (avoid storage & worker tiles)
+    const occupied = new Set();
+    occupied.add(`${storage.x},${storage.y}`);
+    for (const w of workers) occupied.add(`${w.x},${w.y}`);
+
+    let placed = 0;
+    let tries = 0;
+    while (placed < treeCount && tries < 200000) {
+      tries++;
+      const x = Math.floor(Math.random()*W);
+      const y = Math.floor(Math.random()*H);
+      const k = `${x},${y}`;
+      if (occupied.has(k)) continue;
+      if (trees.some(t => t.x===x && t.y===y)) continue;
+
+      trees.push({
+        id: placed,
+        x, y,
+        wood: TREE_WOOD_MIN + Math.floor(Math.random()*(TREE_WOOD_MAX - TREE_WOOD_MIN + 1)),
+        reservedBy: null
+      });
+      placed++;
+    }
+
+    log(`地圖已生成：伐木工=${workerCount}，樹=${placed}。開始自動採集直到砍完。`);
+    updateInfo();
+  }
+
+  btnStart.onclick = () => {
+    const wc = clampInt(inpWorkers.value, 1, 200, 5);
+    const tc = clampInt(inpTrees.value, 1, 2000, 120);
+    inpWorkers.value = wc;
+    inpTrees.value = tc;
+    spawn(wc, tc);
+  };
+
+  btnPause.onclick = () => {
+    running = !running;
+    btnPause.textContent = running ? "暫停" : "繼續";
+    statusTag.textContent = running ? "RUN" : "PAUSE";
+    log(running ? "繼續模擬" : "已暫停");
+  };
+  btnStep.onclick = () => {
+    if (running) return;
+    tick();
+    render();
+  };
+
+  // ======== Click command: prefer a tree ========
+  canvas.addEventListener("click", (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = Math.floor((ev.clientX - rect.left) / TILE);
+    const my = Math.floor((ev.clientY - rect.top) / TILE);
+    if (!inBounds(mx,my)) return;
+
+    const tr = trees.find(t => t.wood > 0 && t.x===mx && t.y===my);
+    if (!tr) {
+      log(`(點擊) 這裡不是樹：(${mx},${my})`);
+      return;
+    }
+
+    userPreferredTreeId = tr.id;
+    log(`命令偏好：優先處理 樹#${tr.id} @(${tr.x},${tr.y})（閒置伐木工會優先去）`);
+  });
+
+  // ======== Simulation tick ========
+  function tickWorker(w) {
+    function stepMove() {
+      if (!w.path || w.path.length === 0) return false;
+      const next = w.path.shift();
+      w.x = next.x;
+      w.y = next.y;
+      return true;
+    }
+
+    if (w.state === "Idle") {
+      planToTree(w);
+      return;
+    }
+
+    if (w.state === "ToTree") {
+      if (tickCount % MOVE_EVERY_TICKS === 0) stepMove();
+      if (!w.path || w.path.length === 0) {
+        w.state = "Chop";
+        w.chopProgress = 0;
+        w.lastAction = `Chop #${w.targetTreeId}`;
+      }
+      return;
+    }
+
+    if (w.state === "Chop") {
+      const tr = treeById(w.targetTreeId);
+      if (!treeAlive(tr)) {
+        // release reservation and proceed
+        if (w.carry > 0) {
+          unreserveTreeIfOwned(w.targetTreeId, w.id);
+          planToStorage(w);
+        } else {
+          unreserveTreeIfOwned(w.targetTreeId, w.id);
+          w.targetTreeId = null;
+          w.state = "Idle";
+          w.lastAction = "Idle (tree gone)";
+        }
+        return;
+      }
+
+      const adjacent = (Math.abs(w.x-tr.x) + Math.abs(w.y-tr.y)) === 1;
+      if (!adjacent) {
+        // replan (maybe pushed by congestion)
+        unreserveTreeIfOwned(w.targetTreeId, w.id);
+        w.targetTreeId = null;
+        w.state = "Idle";
+        w.lastAction = "Replan (not adjacent)";
+        return;
+      }
+
+      w.chopProgress += STEP_TIME;
+
+      while (w.chopProgress >= 1.0 && w.carry < WORKER_CARRY_CAP && tr.wood > 0) {
+        w.chopProgress -= 1.0;
+        const take = Math.min(CHOP_RATE, tr.wood, WORKER_CARRY_CAP - w.carry);
+        tr.wood -= take;
+        w.carry += take;
+      }
+
+      if (w.carry >= WORKER_CARRY_CAP) {
+        unreserveTreeIfOwned(w.targetTreeId, w.id);
+        planToStorage(w);
+      } else if (tr.wood <= 0) {
+        // tree depleted; release reservation and go drop if carrying
+        unreserveTreeIfOwned(w.targetTreeId, w.id);
+        if (w.carry > 0) {
+          planToStorage(w);
+        } else {
+          w.targetTreeId = null;
+          w.state = "Idle";
+        }
+      }
+      return;
+    }
+
+    if (w.state === "ToStorage") {
+      if (tickCount % MOVE_EVERY_TICKS === 0) stepMove();
+      if (!w.path || w.path.length === 0) {
+        w.state = "Dropoff";
+        w.lastAction = "Dropoff";
+      }
+      return;
+    }
+
+    if (w.state === "Dropoff") {
+      if (w.x === storage.x && w.y === storage.y) {
+        if (w.carry > 0) {
+          storage.totalWood += w.carry;
+          w.carry = 0;
+        }
+        // after dropoff, continue auto
+        w.targetTreeId = null;
+        w.state = "Idle";
+        w.lastAction = "Idle (after drop)";
+      } else {
+        planToStorage(w);
+      }
+      return;
+    }
+  }
+
+  function tick() {
+    tickCount++;
+
+    for (const w of workers) tickWorker(w);
+
+    // finish condition: no trees left and everyone is idle with empty carry
+    if (!anyTreesLeft()) {
+      let allIdle = true;
+      for (const w of workers) {
+        if (w.carry > 0 || w.state !== "Idle") { allIdle = false; break; }
+      }
+      if (allIdle) {
+        if (running) {
+          running = false;
+          btnPause.textContent = "繼續";
+          statusTag.textContent = "DONE";
+          log(`✅ 全圖樹已砍完。倉庫總木材=${storage.totalWood}`);
+        }
+      }
+    }
+
+    updateInfo();
+  }
+
+  // ======== Rendering ========
+  function render() {
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+
+    // Trees
+    for (const tr of trees) {
+      if (tr.wood <= 0) continue;
+      const r = Math.floor(40 + (tr.wood / TREE_WOOD_MAX) * 30);
+      ctx.fillStyle = `rgb(0,${120+r},0)`;
+      ctx.fillRect(tr.x*TILE, tr.y*TILE, TILE, TILE);
+    }
+
+    // Storage
+    ctx.fillStyle = "rgb(220,200,60)";
+    ctx.fillRect(storage.x*TILE, storage.y*TILE, TILE, TILE);
+
+    // Workers
+    for (const w of workers) {
+      // hue shift by id (simple)
+      const base = 80 + (w.id * 37) % 120;
+      ctx.fillStyle = `rgb(${base},160,255)`;
+      ctx.fillRect(w.x*TILE, w.y*TILE, TILE, TILE);
+
+      // show path dots lightly for first few workers only (avoid clutter)
+      if (w.id < 3 && w.path && w.path.length) {
+        ctx.fillStyle = "rgba(180,180,255,0.25)";
+        for (const p of w.path) {
+          const s = Math.max(1, Math.floor(TILE/3));
+          ctx.fillRect(p.x*TILE + Math.floor(TILE/3), p.y*TILE + Math.floor(TILE/3), s, s);
+        }
+      }
+    }
+
+    // highlight preferred tree
+    if (userPreferredTreeId !== null) {
+      const tr = treeById(userPreferredTreeId);
+      if (tr && tr.wood > 0) {
+        ctx.strokeStyle = "rgba(255,255,255,0.85)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tr.x*TILE+0.5, tr.y*TILE+0.5, TILE-1, TILE-1);
+      }
+    }
+  }
+
+  function updateInfo() {
+    const aliveTrees = trees.reduce((acc,t)=>acc + (t.wood>0 ? 1 : 0), 0);
+    const working = workers.reduce((acc,w)=>acc + (w.state!=="Idle" ? 1 : 0), 0);
+    const carrying = workers.reduce((acc,w)=>acc + w.carry, 0);
+
+    const pref = (userPreferredTreeId!==null) ? treeById(userPreferredTreeId) : null;
+    const prefText = (pref && pref.wood>0) ? `樹#${pref.id} @(${pref.x},${pref.y}) wood=${pref.wood}` : "(無/已砍完)";
+
+    // Show a compact worker summary (first 10)
+    const lines = [];
+    const showN = Math.min(10, workers.length);
+    for (let i=0;i<showN;i++) {
+      const w = workers[i];
+      lines.push(`W${w.id}: (${w.x},${w.y}) ${w.state} carry=${w.carry}/${WORKER_CARRY_CAP} target=${w.targetTreeId ?? "-"}`);
+    }
+    if (workers.length > showN) lines.push(`... +${workers.length - showN} workers`);
+
+    infoEl.innerHTML = `
+      <div class="kv">
+        <div><b>世界</b>：${W}×${H} tiles（每格 ${TILE}px）</div>
+        <div><b>倉庫</b>：位置=(${storage.x},${storage.y})　總木材=<b>${storage.totalWood}</b>（假設無限大）</div>
+        <div><b>樹</b>：剩餘 <b>${aliveTrees}</b> / ${trees.length}</div>
+        <div><b>伐木工</b>：總數 ${workers.length}，工作中 ${working}，總攜帶木材 ${carrying}</div>
+        <div>點擊偏好目標：${prefText}</div>
+        <div class="divider"></div>
+        <div><b>伐木工狀態（前 ${showN} 名）</b></div>
+        <div style="white-space:pre; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace; font-size:12px; color:#cfcfcf;">${lines.join("\n")}</div>
+      </div>
+    `;
+  }
+
+  // ======== Main loop ========
+  function loop() {
+    if (running) tick();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ======== Start ========
+  // default spawn
+  spawn(clampInt(inpWorkers.value,1,200,5), clampInt(inpTrees.value,1,2000,120));
+  render();
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>

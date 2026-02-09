@@ -1,0 +1,1379 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Mini RTS - v4 (Perf Rewrite: Layered Render, Path Queue, Frontier Cache)</title>
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Arial,"Noto Sans TC",sans-serif;}
+    .wrap{display:grid;grid-template-columns:auto 450px;height:100vh;}
+    canvas{background:#111;image-rendering:pixelated;}
+    .panel{background:#0b0b0b;color:#ddd;padding:12px;overflow:auto;border-left:1px solid #222;}
+    .panel h2{margin:0 0 8px;font-size:16px;}
+    .hint{font-size:12px;color:#aaa;margin:10px 0;line-height:1.45;}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+    .row label{font-size:12px;color:#bbb;display:flex;gap:6px;align-items:center;}
+    .row input{width:96px;background:#0f0f0f;color:#eee;border:1px solid #333;padding:6px 8px;border-radius:6px;}
+    button{background:#222;color:#eee;border:1px solid #333;padding:6px 10px;border-radius:6px;cursor:pointer;}
+    button:hover{background:#2a2a2a;}
+    .tag{display:inline-block;padding:1px 6px;border:1px solid #333;border-radius:999px;font-size:11px;color:#bbb;}
+    .divider{height:1px;background:#1f1f1f;margin:10px 0;}
+    .kv{font-size:13px;line-height:1.45;}
+    .kv b{color:#fff;}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #333;border-radius:999px;font-size:12px;color:#ddd;margin-right:6px;margin-bottom:6px;}
+    .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;white-space:pre-wrap;background:#070707;border:1px solid #222;padding:8px;border-radius:6px;}
+    .small{font-size:12px;color:#aaa;margin:8px 0 6px;}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c"></canvas>
+  <div class="panel">
+    <h2>Mini RTS v4：效能架構重寫版</h2>
+    <div class="hint">
+      這版重點是「越跑越慢」的根因處理：<br/>
+      ✅ <b>分層渲染</b>：地形/資源(底圖)與迷霧(覆蓋)用離屏 canvas，主畫面每幀只 drawImage + 畫單位。<br/>
+      ✅ <b>迷霧增量更新</b>：只重畫「可見/探索狀態有變化」的格子（不再每幀掃整張地圖）。<br/>
+      ✅ <b>路徑排隊</b>：每個 tick 限制最多 N 次 A*，單位改為「請求路徑→等回覆」避免瞬間爆量。<br/>
+      ✅ <b>斥侯 frontier 快取</b>：不再 BFS 掃整圖；用「前線格集合」增量維護，斥侯定期挑最近前線。<br/>
+      ✅ <b>資源選目標採樣</b>：工人不再掃全資源陣列，改抽樣 K 個候選做評分（可調）。<br/><br/>
+      操作：調參數→<b>生成地圖</b>→<b>開始</b>。點樹/礦可設偏好目標。<br/>
+      小提示：想壓力測試，把單位/資源數拉高看看 FPS 是否仍穩定。
+    </div>
+
+    <div class="row" style="margin:6px 0 8px;">
+      <label>伐木工 <input id="inpLumber" type="number" min="0" max="600" value="40"/></label>
+      <label>採礦工 <input id="inpMiner" type="number" min="0" max="600" value="30"/></label>
+      <label>斥侯 <input id="inpScout" type="number" min="0" max="80" value="4"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>樹木數量 <input id="inpTrees" type="number" min="0" max="6000" value="900"/></label>
+      <label>礦石數量 <input id="inpRocks" type="number" min="0" max="4000" value="450"/></label>
+      <label>障礙(%) <input id="inpObs" type="number" min="0" max="40" value="10"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>工人視野 <input id="inpVisW" type="number" min="2" max="24" value="7"/></label>
+      <label>斥侯視野 <input id="inpVisS" type="number" min="4" max="36" value="13"/></label>
+      <label>格像素 <input id="inpTile" type="number" min="4" max="12" value="7"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>A* / tick <input id="inpAstarBudget" type="number" min="1" max="40" value="8"/></label>
+      <label>目標抽樣K <input id="inpSampleK" type="number" min="5" max="120" value="35"/></label>
+      <label>Tick Hz <input id="inpHz" type="number" min="5" max="60" value="20"/></label>
+    </div>
+
+    <div class="row" style="margin-bottom:6px;">
+      <button id="gen">生成地圖</button>
+      <button id="start">開始</button>
+      <button id="pause">暫停</button>
+      <button id="step">單步</button>
+      <button id="clearlog">清除訊息</button>
+      <span class="tag" id="statusTag">READY</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="kv" id="info"></div>
+    <div class="small">事件訊息</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ===== World =====
+  const W = 100, H = 100;
+  const N = W*H;
+  const Tile = { Empty:0, Block:1, Storage:2 };
+
+  // ===== Gameplay defaults =====
+  const WORKER_CARRY_CAP = 10;
+  const CHOP_RATE = 1;  // per sec
+  const MINE_RATE = 1;  // per sec
+  const TREE_MIN=18, TREE_MAX=55;
+  const ROCK_MIN=25, ROCK_MAX=70;
+
+  // ===== DOM =====
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  const logEl = document.getElementById("log");
+  const infoEl = document.getElementById("info");
+  const statusTag = document.getElementById("statusTag");
+
+  const inpLumber = document.getElementById("inpLumber");
+  const inpMiner  = document.getElementById("inpMiner");
+  const inpScout  = document.getElementById("inpScout");
+  const inpTrees  = document.getElementById("inpTrees");
+  const inpRocks  = document.getElementById("inpRocks");
+  const inpObs    = document.getElementById("inpObs");
+  const inpVisW   = document.getElementById("inpVisW");
+  const inpVisS   = document.getElementById("inpVisS");
+  const inpTile   = document.getElementById("inpTile");
+  const inpAstarBudget = document.getElementById("inpAstarBudget");
+  const inpSampleK = document.getElementById("inpSampleK");
+  const inpHz = document.getElementById("inpHz");
+
+  const btnGen = document.getElementById("gen");
+  const btnStart = document.getElementById("start");
+  const btnPause = document.getElementById("pause");
+  const btnStep = document.getElementById("step");
+  const btnClear = document.getElementById("clearlog");
+
+  function clampInt(v, lo, hi, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(lo, Math.min(hi, Math.floor(n)));
+  }
+  function nowStr(){
+    const t=new Date();
+    const hh=String(t.getHours()).padStart(2,"0");
+    const mm=String(t.getMinutes()).padStart(2,"0");
+    const ss=String(t.getSeconds()).padStart(2,"0");
+    return `[${hh}:${mm}:${ss}]`;
+  }
+  function log(msg){ logEl.textContent = `${nowStr()} ${msg}\n` + logEl.textContent; }
+  btnClear.onclick = ()=> (logEl.textContent="");
+
+  // ===== Coordinates =====
+  const idx = (x,y)=> y*W + x;
+  const xOf = (i)=> i % W;
+  const yOf = (i)=> (i / W) | 0;
+  const inBounds = (x,y)=> x>=0 && x<W && y>=0 && y<H;
+  const manhattan = (ax,ay,bx,by)=> Math.abs(ax-bx)+Math.abs(ay-by);
+
+  // ===== Settings (runtime) =====
+  let TILEPX = 7;
+  let TICK_HZ = 20;
+  let STEP_TIME = 1 / TICK_HZ;
+  let ASTAR_BUDGET = 8;
+  let SAMPLE_K = 35;
+
+  // ===== World state =====
+  let grid;              // Uint8Array tile type
+  let occupied;          // Int32Array unitId or -1
+  let explored;          // Uint8Array (0/1)
+  let visible;           // Uint8Array (0/1)
+  let visiblePrev;       // Uint8Array
+
+  // Resource maps by tile
+  let resType;           // Uint8Array: 0 none, 1 tree, 2 rock
+  let resIdAt;           // Int32Array: resource id, else -1
+
+  // Resource arrays
+  let trees;             // {id,x,y,amt,alive}
+  let rocks;             // {id,x,y,amt,alive}
+  let activeTrees;       // Int32Array-like list (JS array) of alive ids
+  let activeRocks;
+
+  // Known sets (discovered) for targeting
+  let knownTreeIds;      // JS array of ids
+  let knownRockIds;
+
+  // Storage
+  let storage = {x:50,y:50, wood:0, ore:0};
+
+  // Units
+  let units = [];        // all units
+  let workers = [];      // lumber+miner
+  let scouts = [];
+
+  // Preference click
+  let preferred = {type:null, id:null};
+
+  // ===== Render layers (offscreen) =====
+  let baseLayer, fogLayer;
+  let baseCtx, fogCtx;
+
+  function resizeCanvases(){
+    canvas.width = W*TILEPX;
+    canvas.height = H*TILEPX;
+
+    baseLayer = document.createElement("canvas");
+    fogLayer  = document.createElement("canvas");
+    baseLayer.width = fogLayer.width = canvas.width;
+    baseLayer.height = fogLayer.height = canvas.height;
+    baseCtx = baseLayer.getContext("2d");
+    fogCtx  = fogLayer.getContext("2d");
+    baseCtx.imageSmoothingEnabled = false;
+    fogCtx.imageSmoothingEnabled = false;
+  }
+
+  // ===== Pathfinding (fast A* with stamps + binary heap) =====
+  const DIRS8 = [
+    {dx: 1, dy: 0, c: 1},{dx:-1, dy: 0, c: 1},{dx: 0, dy: 1, c: 1},{dx: 0, dy:-1, c: 1},
+    {dx: 1, dy: 1, c: Math.SQRT2},{dx: 1, dy:-1, c: Math.SQRT2},{dx:-1, dy: 1, c: Math.SQRT2},{dx:-1, dy:-1, c: Math.SQRT2},
+  ];
+  function octileH(ax,ay,bx,by){
+    const dx=Math.abs(ax-bx), dy=Math.abs(ay-by);
+    const F=Math.SQRT2-1;
+    return (dx<dy) ? F*dx+dy : F*dy+dx;
+  }
+  function isWalkableTile(i){
+    const t = grid[i];
+    if (t === Tile.Block) return false;
+    if (resType[i] !== 0) return false; // cannot stand on live resource tiles
+    return true;
+  }
+  function canMoveDiag(fromI, toI){
+    const fx = xOf(fromI), fy = yOf(fromI);
+    const tx = xOf(toI), ty = yOf(toI);
+    const dx = tx-fx, dy=ty-fy;
+    if (Math.abs(dx)===1 && Math.abs(dy)===1){
+      const i1 = idx(fx+dx, fy);
+      const i2 = idx(fx, fy+dy);
+      if (!isWalkableTile(i1) || !isWalkableTile(i2)) return false;
+    }
+    return true;
+  }
+
+  // Heap for open set
+  class MinHeap {
+    constructor(){
+      this.nodes = [];  // node index
+      this.fs = [];     // f score
+    }
+    size(){ return this.nodes.length; }
+    push(node, f){
+      const a=this.nodes, b=this.fs;
+      let i=a.length;
+      a.push(node); b.push(f);
+      while (i>0){
+        const p=(i-1)>>1;
+        if (b[p] <= f) break;
+        a[i]=a[p]; b[i]=b[p];
+        i=p;
+      }
+      a[i]=node; b[i]=f;
+    }
+    pop(){
+      const a=this.nodes, b=this.fs;
+      const n=a.length;
+      if (!n) return null;
+      const out=a[0];
+      const lastNode=a.pop();
+      const lastF=b.pop();
+      if (n>1){
+        let i=0;
+        while(true){
+          let l=i*2+1, r=l+1;
+          if (l >= a.length) break;
+          let s=l;
+          if (r < a.length && b[r] < b[l]) s=r;
+          if (b[s] >= lastF) break;
+          a[i]=a[s]; b[i]=b[s];
+          i=s;
+        }
+        a[i]=lastNode; b[i]=lastF;
+      }
+      return out;
+    }
+  }
+
+  // A* arrays with stamping to avoid clearing
+  let gScore, parent, seenStamp, closedStamp, stampCounter;
+  function initAstarArrays(){
+    gScore = new Float32Array(N);
+    parent = new Int32Array(N);
+    seenStamp = new Int32Array(N);
+    closedStamp = new Int32Array(N);
+    stampCounter = 1;
+  }
+  function astar(startI, goalI, avoidOccupied=true){
+    // Bump stamp
+    const stamp = stampCounter++;
+    if (stampCounter > 1e9) { // rare
+      seenStamp.fill(0); closedStamp.fill(0);
+      stampCounter = 1;
+    }
+
+    const open = new MinHeap();
+    const sx=xOf(startI), sy=yOf(startI), gx=xOf(goalI), gy=yOf(goalI);
+
+    // init
+    seenStamp[startI] = stamp;
+    gScore[startI] = 0;
+    parent[startI] = -1;
+    open.push(startI, octileH(sx,sy,gx,gy));
+
+    while(open.size()){
+      const cur = open.pop();
+      if (cur === goalI){
+        // reconstruct path (excluding start)
+        const path = [];
+        let p = cur;
+        while (p !== -1 && p !== startI){
+          path.push(p);
+          p = parent[p];
+        }
+        path.reverse();
+        return path;
+      }
+      closedStamp[cur] = stamp;
+
+      const cx = xOf(cur), cy = yOf(cur);
+      const baseG = gScore[cur];
+
+      for (let k=0;k<8;k++){
+        const d=DIRS8[k];
+        const nx=cx+d.dx, ny=cy+d.dy;
+        if (!inBounds(nx,ny)) continue;
+        const ni = idx(nx,ny);
+        if (!isWalkableTile(ni)) continue;
+        if (!canMoveDiag(cur, ni)) continue;
+
+        if (avoidOccupied){
+          const occ = occupied[ni];
+          if (occ !== -1 && ni !== goalI) continue;
+        }
+
+        if (closedStamp[ni] === stamp) continue;
+
+        const tentative = baseG + d.c;
+        if (seenStamp[ni] !== stamp || tentative < gScore[ni]){
+          seenStamp[ni] = stamp;
+          gScore[ni] = tentative;
+          parent[ni] = cur;
+          const f = tentative + octileH(nx,ny,gx,gy);
+          open.push(ni, f);
+        }
+      }
+    }
+    return null;
+  }
+
+  // ===== Path request queue =====
+  const PathJobType = { ToTile:0 };
+  let pathQueue = []; // {unitId, startI, goalI, type}
+  function requestPath(unitId, goalI){
+    const u = units[unitId];
+    if (!u) return;
+    // de-dup: if already waiting, ignore
+    if (u.waitingPath) return;
+    u.waitingPath = true;
+    pathQueue.push({unitId, startI: idx(u.x,u.y), goalI, type: PathJobType.ToTile});
+  }
+  function processPathQueue(){
+    let done = 0;
+    while(done < ASTAR_BUDGET && pathQueue.length){
+      const job = pathQueue.shift();
+      const u = units[job.unitId];
+      if (!u) continue;
+      u.waitingPath = false;
+      const path = astar(job.startI, job.goalI, true);
+      if (!path){
+        u.path = [];
+        u.state = "Idle";
+        u.target = null;
+        u.stuckTicks = 0;
+        u.failPathTicks = (u.failPathTicks||0) + 1;
+      } else {
+        u.path = path; // array of tile indices
+        u.state = "Move";
+        u.stuckTicks = 0;
+        u.failPathTicks = 0;
+      }
+      done++;
+    }
+  }
+
+  // ===== Fog of war (incremental update & frontier cache) =====
+  let visOffsetsWorker = [];
+  let visOffsetsScout  = [];
+  let frontierSet; // Set of tile indices (frontier)
+  function buildOffsets(radius){
+    const out=[];
+    for(let dy=-radius; dy<=radius; dy++){
+      for(let dx=-radius; dx<=radius; dx++){
+        if (dx*dx+dy*dy <= radius*radius) out.push({dx,dy});
+      }
+    }
+    return out;
+  }
+  function clearFog(){
+    explored = new Uint8Array(N);
+    visible = new Uint8Array(N);
+    visiblePrev = new Uint8Array(N);
+    frontierSet = new Set();
+    knownTreeIds = [];
+    knownRockIds = [];
+  }
+
+  function isFrontierTile(i){
+    if (!explored[i]) return false;
+    const x=xOf(i), y=yOf(i);
+    // only consider tiles that are walkable for scouts to stand on (block not allowed; resource tiles are not standable)
+    if (grid[i]===Tile.Block) return false;
+    // frontier: has at least one neighbor unexplored
+    for (let dy=-1; dy<=1; dy++){
+      for (let dx=-1; dx<=1; dx++){
+        if (dx===0 && dy===0) continue;
+        const nx=x+dx, ny=y+dy;
+        if (!inBounds(nx,ny)) continue;
+        const ni = idx(nx,ny);
+        if (!explored[ni]) return true;
+      }
+    }
+    return false;
+  }
+
+  function updateFrontierAround(i){
+    // update i and its neighbors in frontierSet
+    const x=xOf(i), y=yOf(i);
+    for (let dy=-1; dy<=1; dy++){
+      for (let dx=-1; dx<=1; dx++){
+        const nx=x+dx, ny=y+dy;
+        if (!inBounds(nx,ny)) continue;
+        const ni = idx(nx,ny);
+        const isF = isFrontierTile(ni);
+        if (isF) frontierSet.add(ni);
+        else frontierSet.delete(ni);
+      }
+    }
+  }
+
+  function discoverResourceAtTile(i){
+    const rt = resType[i];
+    if (rt===1){
+      const id = resIdAt[i];
+      if (id>=0) knownTreeIds.push(id);
+      // draw tree on base layer (discovered)
+      const x=xOf(i), y=yOf(i);
+      drawTreeTile(x,y,true);
+    } else if (rt===2){
+      const id = resIdAt[i];
+      if (id>=0) knownRockIds.push(id);
+      const x=xOf(i), y=yOf(i);
+      drawRockTile(x,y,true);
+    }
+  }
+
+  function updateVisibilityAndFogLayers(){
+    // compute new visibility (stamp units into visible array)
+    visible.fill(0);
+
+    // mark visible for each unit
+    for (let ui=0; ui<units.length; ui++){
+      const u = units[ui];
+      const offsets = (u.role==="scout") ? visOffsetsScout : visOffsetsWorker;
+      const ux=u.x, uy=u.y;
+      for (let k=0;k<offsets.length;k++){
+        const ox=offsets[k].dx, oy=offsets[k].dy;
+        const x=ux+ox, y=uy+oy;
+        if (!inBounds(x,y)) continue;
+        visible[idx(x,y)] = 1;
+      }
+    }
+
+    // determine changed tiles
+    const changed = [];
+    const newlyExplored = [];
+    for (let i=0;i<N;i++){
+      const v = visible[i];
+      const pv = visiblePrev[i];
+      if (v !== pv) changed.push(i);
+      if (v===1 && explored[i]===0) {
+        explored[i]=1;
+        newlyExplored.push(i);
+      }
+    }
+
+    // update visiblePrev (copy only changed for speed)
+    for (let k=0;k<changed.length;k++){
+      const i=changed[k];
+      visiblePrev[i]=visible[i];
+    }
+
+    // update frontier and discovered resources from newly explored tiles
+    for (let k=0;k<newlyExplored.length;k++){
+      const i=newlyExplored[k];
+      updateFrontierAround(i);
+      // if resource tile discovered, draw it + add to known lists
+      if (resType[i]!==0) discoverResourceAtTile(i);
+      // if storage tile discovered (it always is), draw (already on base) but ok
+    }
+
+    // update fog layer only for changed tiles
+    for (let k=0;k<changed.length;k++){
+      drawFogTile(changed[k]);
+    }
+
+    // also ensure newly explored tiles fog drawn correctly
+    for (let k=0;k<newlyExplored.length;k++){
+      drawFogTile(newlyExplored[k]);
+    }
+  }
+
+  // ===== Rendering helpers =====
+  function clearCanvas(ctx){
+    ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
+  }
+  function drawBaseAll(){
+    clearCanvas(baseCtx);
+    // background
+    baseCtx.fillStyle="#111";
+    baseCtx.fillRect(0,0,baseLayer.width,baseLayer.height);
+
+    // obstacles
+    baseCtx.fillStyle="rgb(70,70,70)";
+    for (let i=0;i<N;i++){
+      if (grid[i]===Tile.Block){
+        const x=xOf(i), y=yOf(i);
+        baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      }
+    }
+
+    // storage
+    drawStorageTile(storage.x, storage.y);
+
+    // resources: do NOT draw undiscovered resources here (fog memory should hide them).
+    // discovered resources will be drawn when explored flips from 0->1.
+  }
+
+  function drawStorageTile(x,y){
+    baseCtx.fillStyle="rgb(220,200,60)";
+    baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+  }
+
+  function drawTreeTile(x,y, visibleOrDiscovered){
+    // When discovered: draw in "memory" dim; if currently visible, unit overlay handles brightness? we'll adjust in main render
+    // Base layer stores the dim version; main render will not re-color resources each frame (performance). Fog gives the effect.
+    baseCtx.fillStyle = "rgb(0,120,0)";
+    baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+  }
+
+  function drawRockTile(x,y, visibleOrDiscovered){
+    baseCtx.fillStyle = "rgb(90,40,140)";
+    baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+  }
+
+  function eraseTileToBackground(i){
+    const x=xOf(i), y=yOf(i);
+    // redraw background for this tile: obstacle? storage? else empty
+    baseCtx.fillStyle="#111";
+    baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+    if (grid[i]===Tile.Block){
+      baseCtx.fillStyle="rgb(70,70,70)";
+      baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+    } else if (grid[i]===Tile.Storage){
+      drawStorageTile(x,y);
+    }
+  }
+
+  function drawFogAll(){
+    clearCanvas(fogCtx);
+    // start fully black
+    for (let i=0;i<N;i++){
+      drawFogTile(i);
+    }
+  }
+
+  function drawFogTile(i){
+    const x=xOf(i), y=yOf(i);
+    // unexplored => black
+    if (!explored[i]){
+      fogCtx.fillStyle="rgb(0,0,0)";
+      fogCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      return;
+    }
+    // explored but not visible => dark overlay
+    if (!visible[i]){
+      fogCtx.fillStyle="rgba(0,0,0,0.55)";
+      fogCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      return;
+    }
+    // visible => clear
+    fogCtx.clearRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+  }
+
+  // ===== Units & behaviors =====
+  function makeUnit(id, role, x, y){
+    return {
+      id, role, x, y,
+      state:"Idle", // Idle | Move | Work | ToStorage | Dropoff | Explore
+      waitingPath:false,
+      path:[],      // array of tile indices
+      target:null,  // {type:'tree'|'rock', id}
+      carry:0,
+      progress:0,
+      stuckTicks:0,
+      lastMovedTick:0,
+      exploreTarget:null, // tile index
+      nextScoutThinkTick:0,
+      failPathTicks:0,
+    };
+  }
+  function isWorker(u){ return u.role==="lumber" || u.role==="miner"; }
+  function isScout(u){ return u.role==="scout"; }
+
+  function rebuildOccupancy(){
+    occupied.fill(-1);
+    for (let i=0;i<units.length;i++){
+      const u=units[i];
+      occupied[idx(u.x,u.y)] = u.id;
+    }
+  }
+
+  function adjacentStandTilesForResourceTile(resI){
+    const x=xOf(resI), y=yOf(resI);
+    const out=[];
+    for (let dy=-1; dy<=1; dy++){
+      for (let dx=-1; dx<=1; dx++){
+        if (dx===0 && dy===0) continue;
+        const nx=x+dx, ny=y+dy;
+        if (!inBounds(nx,ny)) continue;
+        const ni=idx(nx,ny);
+        if (!isWalkableTile(ni)) continue;
+        out.push(ni);
+      }
+    }
+    return out;
+  }
+
+  function chooseBestStandTile(u, resI){
+    const opts = adjacentStandTilesForResourceTile(resI);
+    if (!opts.length) return -1;
+    // prefer closest by manhattan
+    let best=opts[0], bestD=1e9;
+    const ux=u.x, uy=u.y;
+    for (let k=0;k<opts.length;k++){
+      const i=opts[k];
+      const d = Math.abs(xOf(i)-ux)+Math.abs(yOf(i)-uy);
+      if (d < bestD){ bestD=d; best=i; }
+    }
+    return best;
+  }
+
+  function activeList(type){
+    return (type==="tree") ? activeTrees : activeRocks;
+  }
+  function knownList(type){
+    return (type==="tree") ? knownTreeIds : knownRockIds;
+  }
+
+  function pickTargetForWorker(u){
+    const type = (u.role==="lumber") ? "tree" : "rock";
+    const known = knownList(type);
+    if (!known.length) return null;
+
+    // prefer clicked target
+    let preferredId = null;
+    if (preferred.type===type && preferred.id!=null) preferredId = preferred.id;
+
+    // Sample K candidates to avoid scanning all
+    const K = Math.min(SAMPLE_K, known.length);
+    let bestId = null;
+    let bestScore = Infinity;
+
+    // always include preferred if valid
+    function consider(id){
+      const list = (type==="tree") ? trees : rocks;
+      const res = list[id];
+      if (!res || !res.alive) return;
+      const ri = idx(res.x,res.y);
+      // must be explored (should be) and have a stand tile
+      const stand = chooseBestStandTile(u, ri);
+      if (stand === -1) return;
+
+      // score = dist + loadPenalty * (workers targeting)
+      const d = manhattan(u.x,u.y,res.x,res.y);
+
+      // Approx load: count by sampling units (cheap enough) OR maintain load arrays.
+      // We'll keep it cheap: compute load on-demand with small loop but only when selecting target.
+      let load = 0;
+      for (let i=0;i<workers.length;i++){
+        const w=workers[i];
+        if (w.target && w.target.type===type && w.target.id===id) load++;
+      }
+
+      let score = d + 3.2*load;
+      if (preferredId!==null && id===preferredId) score *= 0.25;
+
+      if (score < bestScore){
+        bestScore = score;
+        bestId = id;
+      }
+    }
+
+    if (preferredId!==null) consider(preferredId);
+
+    for (let s=0; s<K; s++){
+      const id = known[(Math.random()*known.length)|0];
+      consider(id);
+    }
+
+    if (bestId===null) return null;
+    return {type, id: bestId};
+  }
+
+  function requestMoveToResource(u, target){
+    const type = target.type;
+    const res = (type==="tree") ? trees[target.id] : rocks[target.id];
+    if (!res || !res.alive) return false;
+    const resI = idx(res.x,res.y);
+    const stand = chooseBestStandTile(u, resI);
+    if (stand === -1) return false;
+
+    u.target = target;
+    requestPath(u.id, stand);
+    return true;
+  }
+
+  function requestMoveToStorage(u){
+    requestPath(u.id, idx(storage.x, storage.y));
+    u.state = "ToStorage"; // will become Move when path ready
+  }
+
+  function tryStepFromPath(u){
+    if (!u.path || u.path.length===0) return false;
+    const nextI = u.path[0];
+    const occ = occupied[nextI];
+    if (occ !== -1){
+      u.stuckTicks++;
+      return false;
+    }
+    // move
+    occupied[idx(u.x,u.y)] = -1;
+    u.x = xOf(nextI); u.y = yOf(nextI);
+    u.path.shift();
+    occupied[nextI] = u.id;
+    u.stuckTicks = 0;
+    return true;
+  }
+
+  function tickWorker(u){
+    // If waiting for path computation, do nothing
+    if (u.waitingPath) return;
+
+    // If moving: step
+    if (u.state === "Move" || u.state === "ToStorage"){
+      const moved = tryStepFromPath(u);
+      if (!moved){
+        // congestion: if stuck too long, replan current goal (path head)
+        if (u.stuckTicks > 16){
+          u.stuckTicks = 0;
+          if (u.path && u.path.length){
+            const goalI = u.path[u.path.length-1];
+            requestPath(u.id, goalI);
+          } else {
+            u.state="Idle"; u.target=null;
+          }
+        }
+        return;
+      }
+      if (!u.path.length){
+        // arrived
+        if (u.state === "ToStorage") u.state="Dropoff";
+        else u.state="Work";
+        u.progress = 0;
+      }
+      return;
+    }
+
+    if (u.state === "Dropoff"){
+      if (u.x===storage.x && u.y===storage.y){
+        if (u.carry>0){
+          if (u.role==="lumber") storage.wood += u.carry;
+          else storage.ore += u.carry;
+          u.carry = 0;
+        }
+        u.state="Idle";
+        u.target=null;
+      } else {
+        requestMoveToStorage(u);
+      }
+      return;
+    }
+
+    if (u.state === "Work"){
+      if (!u.target){ u.state="Idle"; return; }
+      const type = u.target.type;
+      const res = (type==="tree") ? trees[u.target.id] : rocks[u.target.id];
+      if (!res || !res.alive){
+        // carry -> storage
+        if (u.carry>0) requestMoveToStorage(u);
+        else { u.state="Idle"; u.target=null; }
+        return;
+      }
+
+      // must be adjacent
+      if (Math.abs(u.x-res.x)>1 || Math.abs(u.y-res.y)>1 || (u.x===res.x && u.y===res.y)){
+        // got displaced; re-approach
+        requestMoveToResource(u, u.target);
+        return;
+      }
+
+      u.progress += STEP_TIME;
+      const rate = (type==="tree") ? CHOP_RATE : MINE_RATE;
+      while (u.progress >= 1.0 && u.carry < WORKER_CARRY_CAP && res.amt > 0){
+        u.progress -= 1.0;
+        const take = Math.min(rate, res.amt, WORKER_CARRY_CAP - u.carry);
+        res.amt -= take;
+        u.carry += take;
+      }
+
+      if (res.amt <= 0){
+        res.alive = false;
+        // clear resource tile in maps
+        const ri = idx(res.x,res.y);
+        resType[ri] = 0;
+        resIdAt[ri] = -1;
+        eraseTileToBackground(ri);
+
+        // remove from active list lazily (we'll clean occasionally)
+        // also if this was preferred, clear preference
+        if (preferred.type===type && preferred.id===res.id) preferred = {type:null,id:null};
+
+        // if we were carrying, go storage; else idle
+        if (u.carry>0) requestMoveToStorage(u);
+        else { u.state="Idle"; u.target=null; }
+        return;
+      }
+
+      if (u.carry >= WORKER_CARRY_CAP){
+        requestMoveToStorage(u);
+        return;
+      }
+      return;
+    }
+
+    // Idle
+    if (u.state === "Idle"){
+      // if carrying, go storage
+      if (u.carry > 0){ requestMoveToStorage(u); return; }
+
+      const target = pickTargetForWorker(u);
+      if (!target) return;
+      const ok = requestMoveToResource(u, target);
+      if (!ok) { u.target=null; return; }
+      // state will become Move when path returned
+      return;
+    }
+  }
+
+  // Scout behavior: choose nearest frontier tile every ~1s
+  function pickFrontierForScout(u){
+    if (!frontierSet.size) return -1;
+    // sample from frontier set to avoid scanning full set
+    const arr = Array.from(frontierSet);
+    const K = Math.min(60, arr.length);
+    let best=-1, bestD=1e9;
+    for (let s=0;s<K;s++){
+      const fi = arr[(Math.random()*arr.length)|0];
+      const d = Math.abs(xOf(fi)-u.x)+Math.abs(yOf(fi)-u.y);
+      if (d < bestD){ bestD=d; best=fi; }
+    }
+    return best;
+  }
+
+  function tickScout(u){
+    if (u.waitingPath) return;
+
+    if (u.state === "Move" || u.state === "Explore"){
+      const moved = tryStepFromPath(u);
+      if (!moved){
+        if (u.stuckTicks > 16){
+          u.stuckTicks=0;
+          // replan to same exploreTarget if exists
+          const goalI = (u.exploreTarget!=null) ? u.exploreTarget : (u.path.length ? u.path[u.path.length-1] : null);
+          if (goalI!=null) requestPath(u.id, goalI);
+          else u.state="Idle";
+        }
+        return;
+      }
+      if (!u.path.length){
+        u.state="Idle";
+        u.exploreTarget=null;
+      }
+      return;
+    }
+
+    // Idle: think occasionally
+    if (tickCount >= u.nextScoutThinkTick){
+      u.nextScoutThinkTick = tickCount + Math.max(10, (TICK_HZ|0)); // ~1s
+      const fi = pickFrontierForScout(u);
+      if (fi !== -1){
+        u.exploreTarget = fi;
+        requestPath(u.id, fi);
+        u.state = "Explore";
+      }
+    }
+  }
+
+  // ===== Generation =====
+  function addObstaclePatches(percent){
+    const target = Math.floor(N * (percent/100));
+    let added=0;
+
+    const rects = Math.max(3, Math.floor(percent/2));
+    for (let r=0;r<rects;r++){
+      const rw=6+((Math.random()*18)|0);
+      const rh=4+((Math.random()*14)|0);
+      const x0=((Math.random()*(W-rw))|0);
+      const y0=((Math.random()*(H-rh))|0);
+      for (let y=y0;y<y0+rh;y++){
+        for (let x=x0;x<x0+rw;x++){
+          const i=idx(x,y);
+          if (grid[i]!==Tile.Block){ grid[i]=Tile.Block; added++; }
+        }
+      }
+    }
+
+    let guard=0;
+    while (added<target && guard<300000){
+      guard++;
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      const i=idx(x,y);
+      if (grid[i]===Tile.Block) continue;
+      grid[i]=Tile.Block; added++;
+    }
+    return added;
+  }
+
+  function spawnClusteredPoints(count, occupiedSet, avoid){
+    const clusters = Math.max(4, Math.floor(Math.sqrt(Math.max(1,count))/1.2));
+    const centers=[];
+    let tries=0;
+    while(centers.length<clusters && tries<200000){
+      tries++;
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      const k=`${x},${y}`;
+      if (occupiedSet.has(k)) continue;
+      const i=idx(x,y);
+      if (grid[i]===Tile.Block) continue;
+      if (manhattan(x,y,avoid.x,avoid.y)<avoid.dist) continue;
+      centers.push({x,y});
+    }
+
+    const used=new Set();
+    const pts=[];
+    function place(x,y){
+      if (!inBounds(x,y)) return false;
+      const k=`${x},${y}`;
+      if (used.has(k) || occupiedSet.has(k)) return false;
+      const i=idx(x,y);
+      if (grid[i]===Tile.Block) return false;
+      used.add(k);
+      pts.push({x,y});
+      return true;
+    }
+
+    let placed=0, guard2=0;
+    while(placed<count && guard2<800000){
+      guard2++;
+      const c=centers[(Math.random()*centers.length)|0];
+      const r=(Math.random()<0.75)?6:12;
+      const ang=Math.random()*Math.PI*2;
+      const rad=Math.abs((Math.random()+Math.random()+Math.random())/3)*r;
+      let x=Math.round(c.x+Math.cos(ang)*rad);
+      let y=Math.round(c.y+Math.sin(ang)*rad);
+      x += ((Math.random()-0.5)*2)|0;
+      y += ((Math.random()-0.5)*2)|0;
+      if (place(x,y)) placed++;
+    }
+
+    let guard3=0;
+    while(placed<count && guard3<300000){
+      guard3++;
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      if (place(x,y)) placed++;
+    }
+    return pts;
+  }
+
+  function generate(params){
+    TILEPX = params.tilePx;
+    TICK_HZ = params.tickHz;
+    STEP_TIME = 1 / TICK_HZ;
+    ASTAR_BUDGET = params.astarBudget;
+    SAMPLE_K = params.sampleK;
+
+    resizeCanvases();
+
+    // allocate arrays
+    grid = new Uint8Array(N);
+    occupied = new Int32Array(N); occupied.fill(-1);
+    resType = new Uint8Array(N);
+    resIdAt = new Int32Array(N); resIdAt.fill(-1);
+
+    trees = [];
+    rocks = [];
+    activeTrees = [];
+    activeRocks = [];
+    units = [];
+    workers = [];
+    scouts = [];
+    storage = {x:(W/2)|0, y:(H/2)|0, wood:0, ore:0};
+
+    // storage tile
+    grid[idx(storage.x,storage.y)] = Tile.Storage;
+
+    const addedObs = addObstaclePatches(params.obsPercent);
+
+    // clear around storage
+    for (let y=storage.y-3;y<=storage.y+3;y++){
+      for (let x=storage.x-3;x<=storage.x+3;x++){
+        if (!inBounds(x,y)) continue;
+        const i=idx(x,y);
+        grid[i] = (x===storage.x && y===storage.y) ? Tile.Storage : Tile.Empty;
+      }
+    }
+
+    // spawn units in rings
+    const occ = new Set([`${storage.x},${storage.y}`]);
+
+    function spawnRole(n, role){
+      let created=0;
+      for (let ring=1; created<n && ring<40; ring++){
+        for (let dy=-ring; dy<=ring && created<n; dy++){
+          for (let dx=-ring; dx<=ring && created<n; dx++){
+            if (Math.abs(dx)!==ring && Math.abs(dy)!==ring) continue;
+            const x=storage.x+dx, y=storage.y+dy;
+            if (!inBounds(x,y)) continue;
+            const i=idx(x,y);
+            if (grid[i]===Tile.Block) continue;
+            const k=`${x},${y}`;
+            if (occ.has(k)) continue;
+            const id = units.length;
+            const u = makeUnit(id, role, x, y);
+            units.push(u);
+            if (role==="scout") scouts.push(u);
+            else workers.push(u);
+            occ.add(k);
+            created++;
+          }
+        }
+      }
+      while(created<n){
+        const x=storage.x+1, y=storage.y;
+        const id=units.length;
+        const u=makeUnit(id, role, x, y);
+        units.push(u);
+        if (role==="scout") scouts.push(u); else workers.push(u);
+        created++;
+      }
+    }
+
+    spawnRole(params.lumberCount, "lumber");
+    spawnRole(params.minerCount, "miner");
+    spawnRole(params.scoutCount, "scout");
+
+    // mark occupancy
+    rebuildOccupancy();
+
+    // spawn resources
+    const treePts = spawnClusteredPoints(params.treeCount, occ, {x:storage.x,y:storage.y,dist:10});
+    trees = treePts.map((p,i)=>({id:i,x:p.x,y:p.y,amt:TREE_MIN+((Math.random()*(TREE_MAX-TREE_MIN+1))|0), alive:true}));
+    for (let i=0;i<trees.length;i++){
+      const t=trees[i];
+      const ti=idx(t.x,t.y);
+      resType[ti]=1; resIdAt[ti]=t.id;
+      activeTrees.push(t.id);
+      occ.add(`${t.x},${t.y}`);
+    }
+
+    const rockPts = spawnClusteredPoints(params.rockCount, occ, {x:storage.x,y:storage.y,dist:12});
+    rocks = rockPts.map((p,i)=>({id:i,x:p.x,y:p.y,amt:ROCK_MIN+((Math.random()*(ROCK_MAX-ROCK_MIN+1))|0), alive:true}));
+    for (let i=0;i<rocks.length;i++){
+      const r=rocks[i];
+      const ri=idx(r.x,r.y);
+      resType[ri]=2; resIdAt[ri]=r.id;
+      activeRocks.push(r.id);
+    }
+
+    // fog
+    visOffsetsWorker = buildOffsets(params.visionWorker);
+    visOffsetsScout  = buildOffsets(params.visionScout);
+    clearFog();
+
+    // init astar arrays
+    initAstarArrays();
+
+    // draw base and fog
+    drawBaseAll();
+
+    // initial visibility (from units)
+    visiblePrev.fill(0);
+    updateVisibilityAndFogLayers(); // stamps explored, discovers resources around spawn
+
+    // full fog draw (only once)
+    drawFogAll();
+
+    // update fog based on current states (incremental tiles)
+    updateVisibilityAndFogLayers();
+
+    // state
+    tickCount=0;
+    preferred={type:null,id:null};
+    pathQueue=[];
+    simState="READY";
+    setStatus("READY");
+    log(`✅ v4 地圖生成完成：單位=${units.length}（工人${workers.length}、斥侯${scouts.length}），樹=${trees.length}、礦=${rocks.length}，障礙≈${params.obsPercent}%（格數=${addedObs}）`);
+    updateInfo();
+    render();
+  }
+
+  // ===== Click preference =====
+  canvas.addEventListener("click", (ev)=>{
+    if (!grid) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((ev.clientX - rect.left) / TILEPX) | 0;
+    const my = ((ev.clientY - rect.top) / TILEPX) | 0;
+    if (!inBounds(mx,my)) return;
+    const i = idx(mx,my);
+    if (!explored[i]) { log(`(點擊) 未探索：(${mx},${my})`); return; }
+    const rt = resType[i];
+    if (rt===1){
+      preferred={type:"tree", id:resIdAt[i]};
+      log(`偏好目標：樹#${preferred.id} @(${mx},${my})`);
+    } else if (rt===2){
+      preferred={type:"rock", id:resIdAt[i]};
+      log(`偏好目標：礦#${preferred.id} @(${mx},${my})`);
+    } else {
+      log(`(點擊) 不是樹/礦：(${mx},${my})`);
+    }
+  });
+
+  // ===== Simulation loop control =====
+  let simState="READY"; // READY|RUN|PAUSE|DONE
+  function setStatus(s){ statusTag.textContent=s; }
+
+  function anyAlive(list){
+    for (let i=0;i<list.length;i++) if (list[i].alive) return true;
+    return false;
+  }
+  function allDone(){
+    if (anyAlive(trees) || anyAlive(rocks)) return false;
+    for (let i=0;i<workers.length;i++){
+      const u=workers[i];
+      if (u.carry>0 || u.state!=="Idle") return false;
+    }
+    return true;
+  }
+
+  // fixed-step ticking using accumulator for stable sim at chosen Hz
+  let lastTime = performance.now();
+  let acc = 0;
+
+  function tick(){
+    tickCount++;
+
+    // process limited path jobs first (so units can move this tick)
+    processPathQueue();
+
+    // move + behaviors
+    for (let i=0;i<scouts.length;i++) tickScout(scouts[i]);
+    for (let i=0;i<workers.length;i++) tickWorker(workers[i]);
+
+    // fog update (only on tick, not every render frame)
+    updateVisibilityAndFogLayers();
+
+    if (simState==="RUN" && allDone()){
+      simState="DONE";
+      setStatus("DONE");
+      log(`✅ 採集完成：木=${storage.wood}、礦=${storage.ore}`);
+    }
+
+    // occasional cleanup of known lists (remove dead ids) to keep sampling efficient
+    if ((tickCount % (TICK_HZ*3|0))===0){
+      knownTreeIds = knownTreeIds.filter(id => trees[id] && trees[id].alive);
+      knownRockIds = knownRockIds.filter(id => rocks[id] && rocks[id].alive);
+    }
+
+    updateInfo();
+  }
+
+  // ===== Rendering (fast): baseLayer + units + fogLayer =====
+  function render(){
+    if (!grid){
+      ctx.fillStyle="#111";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      return;
+    }
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(baseLayer,0,0);
+
+    // draw resources brighter if currently visible (small amount; avoid scanning all resources)
+    // We'll brighten only for visible tiles by sampling units' vision tiles is expensive; instead we do a cheap check:
+    // If a resource tile is visible, its fog tile is cleared, so brightening is not strictly necessary; but it's nice.
+    // We'll brighten by drawing resources for a small random subset each frame to avoid cost, and it still looks alive.
+    // (Optional aesthetic; safe to remove if you want maximum perf.)
+    for (let s=0; s<60; s++){
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      const i=idx(x,y);
+      if (!visible[i]) continue;
+      const rt=resType[i];
+      if (rt===1){
+        ctx.fillStyle="rgb(0,190,0)";
+        ctx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      } else if (rt===2){
+        ctx.fillStyle="rgb(160,80,255)";
+        ctx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      }
+    }
+
+    // draw units (only if visible to player)
+    for (let ui=0; ui<units.length; ui++){
+      const u=units[ui];
+      const i = idx(u.x,u.y);
+      if (!visible[i]) continue;
+      if (u.role==="lumber") ctx.fillStyle="rgb(80,160,255)";
+      else if (u.role==="miner") ctx.fillStyle="rgb(200,120,255)";
+      else ctx.fillStyle="rgb(255,170,70)";
+      ctx.fillRect(u.x*TILEPX,u.y*TILEPX,TILEPX,TILEPX);
+    }
+
+    // preferred outline (only if explored)
+    if (preferred.type && preferred.id!=null){
+      let rx=-1, ry=-1;
+      if (preferred.type==="tree"){
+        const t=trees[preferred.id];
+        if (t && t.alive){ rx=t.x; ry=t.y; }
+      } else {
+        const r=rocks[preferred.id];
+        if (r && r.alive){ rx=r.x; ry=r.y; }
+      }
+      if (rx!==-1){
+        const i=idx(rx,ry);
+        if (explored[i]){
+          ctx.strokeStyle="rgba(255,255,255,0.9)";
+          ctx.lineWidth=1;
+          ctx.strokeRect(rx*TILEPX+0.5, ry*TILEPX+0.5, TILEPX-1, TILEPX-1);
+        }
+      }
+    }
+
+    ctx.drawImage(fogLayer,0,0);
+  }
+
+  // ===== Info =====
+  function countAlive(list){
+    let c=0;
+    for (let i=0;i<list.length;i++) if (list[i].alive) c++;
+    return c;
+  }
+  function updateInfo(){
+    const aliveTrees=countAlive(trees||[]);
+    const aliveRocks=countAlive(rocks||[]);
+    const exploredCnt = explored ? explored.reduce((a,v)=>a+v,0) : 0;
+    const exploredPct = Math.round(100 * exploredCnt / N);
+
+    // rough perf stats
+    // (Note: render runs at RAF; tick at TICK_HZ; show queue length & budget)
+    infoEl.innerHTML = `
+      <div class="kv">
+        <div class="pill">狀態 <b>${simState}</b></div>
+        <div class="pill">探索度 <b>${exploredPct}%</b></div>
+        <div class="pill">PathQueue <b>${pathQueue.length}</b> / budget ${ASTAR_BUDGET}</div>
+        <div style="margin-top:8px;"><b>倉庫</b>：木=<b>${storage.wood}</b>　礦=<b>${storage.ore}</b></div>
+        <div><b>資源</b>：樹剩 <b>${aliveTrees}</b> / ${trees?trees.length:0}；礦剩 <b>${aliveRocks}</b> / ${rocks?rocks.length:0}</div>
+        <div><b>單位</b>：總 ${units?units.length:0}（工人 ${workers?workers.length:0}，斥侯 ${scouts?scouts.length:0}）</div>
+        <div><b>參數</b>：tick ${TICK_HZ}Hz；抽樣K=${SAMPLE_K}</div>
+        <div><b>偏好目標</b>：${preferred.type ? (preferred.type==="tree"?"樹":"礦") + "#" + preferred.id : "(無)"}</div>
+      </div>
+    `;
+  }
+
+  // ===== Controls =====
+  function readParams(){
+    return {
+      lumberCount: clampInt(inpLumber.value, 0, 600, 40),
+      minerCount: clampInt(inpMiner.value, 0, 600, 30),
+      scoutCount: clampInt(inpScout.value, 0, 80, 4),
+      treeCount: clampInt(inpTrees.value, 0, 6000, 900),
+      rockCount: clampInt(inpRocks.value, 0, 4000, 450),
+      obsPercent: clampInt(inpObs.value, 0, 40, 10),
+      visionWorker: clampInt(inpVisW.value, 2, 24, 7),
+      visionScout: clampInt(inpVisS.value, 4, 36, 13),
+      tilePx: clampInt(inpTile.value, 4, 12, 7),
+      astarBudget: clampInt(inpAstarBudget.value, 1, 40, 8),
+      sampleK: clampInt(inpSampleK.value, 5, 120, 35),
+      tickHz: clampInt(inpHz.value, 5, 60, 20),
+    };
+  }
+
+  btnGen.onclick = ()=>{
+    const p=readParams();
+    inpLumber.value=p.lumberCount;
+    inpMiner.value=p.minerCount;
+    inpScout.value=p.scoutCount;
+    inpTrees.value=p.treeCount;
+    inpRocks.value=p.rockCount;
+    inpObs.value=p.obsPercent;
+    inpVisW.value=p.visionWorker;
+    inpVisS.value=p.visionScout;
+    inpTile.value=p.tilePx;
+    inpAstarBudget.value=p.astarBudget;
+    inpSampleK.value=p.sampleK;
+    inpHz.value=p.tickHz;
+
+    generate(p);
+    simState="READY";
+    setStatus("READY");
+  };
+
+  btnStart.onclick = ()=>{
+    if (!grid){ log("請先按「生成地圖」。"); return; }
+    if (simState==="READY" || simState==="PAUSE"){
+      simState="RUN"; setStatus("RUN"); log("▶ 開始");
+    } else if (simState==="DONE"){
+      log("已完成。請先生成地圖重來。");
+    }
+  };
+
+  btnPause.onclick = ()=>{
+    if (!grid) return;
+    if (simState==="RUN"){ simState="PAUSE"; setStatus("PAUSE"); log("⏸ 暫停"); }
+    else if (simState==="PAUSE"){ simState="RUN"; setStatus("RUN"); log("▶ 繼續"); }
+    else log("目前不在運行中（READY/DONE）。");
+  };
+
+  btnStep.onclick = ()=>{
+    if (!grid) return;
+    if (simState==="RUN" || simState==="DONE") return;
+    const prev=simState;
+    simState="PAUSE"; setStatus("PAUSE");
+    tick();
+    simState=prev; setStatus(prev);
+  };
+
+  // ===== Main RAF loop =====
+  function raf(t){
+    const dt = (t - lastTime) / 1000;
+    lastTime = t;
+
+    if (simState==="RUN"){
+      acc += dt;
+      const step = 1 / TICK_HZ;
+      // cap to avoid spiral of death
+      const maxSteps = 6;
+      let steps=0;
+      while (acc >= step && steps < maxSteps){
+        tick();
+        acc -= step;
+        steps++;
+      }
+    } else {
+      // reset accumulator when paused
+      acc = 0;
+    }
+
+    render();
+    requestAnimationFrame(raf);
+  }
+
+  // ===== Boot =====
+  resizeCanvases();
+  ctx.fillStyle="#111"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  log("v4：先調參數 → 生成地圖 → 開始。");
+  updateInfo();
+  setStatus("READY");
+  requestAnimationFrame(raf);
+})();
+</script>
+</body>
+</html>

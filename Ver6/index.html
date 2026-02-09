@@ -1,0 +1,1364 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Mini RTS - v6 (Parking/Yield + Push/Soft Resolve near Storage)</title>
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Arial,"Noto Sans TC",sans-serif;}
+    .wrap{display:grid;grid-template-columns:auto 500px;height:100vh;}
+    canvas{background:#111;image-rendering:pixelated;}
+    .panel{background:#0b0b0b;color:#ddd;padding:12px;overflow:auto;border-left:1px solid #222;}
+    .panel h2{margin:0 0 8px;font-size:16px;}
+    .hint{font-size:12px;color:#aaa;margin:10px 0;line-height:1.45;}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+    .row label{font-size:12px;color:#bbb;display:flex;gap:6px;align-items:center;}
+    .row input{width:96px;background:#0f0f0f;color:#eee;border:1px solid #333;padding:6px 8px;border-radius:6px;}
+    button{background:#222;color:#eee;border:1px solid #333;padding:6px 10px;border-radius:6px;cursor:pointer;}
+    button:hover{background:#2a2a2a;}
+    .tag{display:inline-block;padding:1px 6px;border:1px solid #333;border-radius:999px;font-size:11px;color:#bbb;}
+    .divider{height:1px;background:#1f1f1f;margin:10px 0;}
+    .kv{font-size:13px;line-height:1.45;}
+    .kv b{color:#fff;}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #333;border-radius:999px;font-size:12px;color:#ddd;margin-right:6px;margin-bottom:6px;}
+    .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;white-space:pre-wrap;background:#070707;border:1px solid #222;padding:8px;border-radius:6px;}
+    .small{font-size:12px;color:#aaa;margin:8px 0 6px;}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c"></canvas>
+  <div class="panel">
+    <h2>Mini RTS v6：倉庫前 Parking/讓路 + 推擠解堵（仍保效能架構）</h2>
+    <div class="hint">
+      v6 針對你說的「大家回倉庫互卡」再加 2 層 RTS 常用手段：<br/>
+      ✅ <b>Parking（停車格）</b>：倉庫周圍半徑 2 的一圈作為等待區，交付格滿時不會原地堵路，而是各自去停車位等。<br/>
+      ✅ <b>Yield / Push（讓路/推擠）</b>：如果前方被占，且占位者是 Idle/Queue/Dropoff，系統會請它「側移一格」讓路；必要時會做小幅推擠。<br/>
+      ✅ 保留：分層渲染、迷霧增量更新、A* 排隊限額、抽樣選資源。<br/><br/>
+      操作：調參數→生成地圖→開始。點樹/礦可設偏好目標。
+    </div>
+
+    <div class="row" style="margin:6px 0 8px;">
+      <label>伐木工 <input id="inpLumber" type="number" min="0" max="900" value="80"/></label>
+      <label>採礦工 <input id="inpMiner" type="number" min="0" max="900" value="60"/></label>
+      <label>斥侯 <input id="inpScout" type="number" min="0" max="150" value="6"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>樹木數量 <input id="inpTrees" type="number" min="0" max="9000" value="1400"/></label>
+      <label>礦石數量 <input id="inpRocks" type="number" min="0" max="6000" value="800"/></label>
+      <label>障礙(%) <input id="inpObs" type="number" min="0" max="40" value="10"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>工人視野 <input id="inpVisW" type="number" min="2" max="24" value="7"/></label>
+      <label>斥侯視野 <input id="inpVisS" type="number" min="4" max="36" value="13"/></label>
+      <label>格像素 <input id="inpTile" type="number" min="4" max="12" value="7"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>A* / tick <input id="inpAstarBudget" type="number" min="1" max="80" value="12"/></label>
+      <label>目標抽樣K <input id="inpSampleK" type="number" min="5" max="200" value="45"/></label>
+      <label>Tick Hz <input id="inpHz" type="number" min="5" max="60" value="20"/></label>
+    </div>
+
+    <div class="row" style="margin-bottom:6px;">
+      <button id="gen">生成地圖</button>
+      <button id="start">開始</button>
+      <button id="pause">暫停</button>
+      <button id="step">單步</button>
+      <button id="clearlog">清除訊息</button>
+      <span class="tag" id="statusTag">READY</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="kv" id="info"></div>
+    <div class="small">事件訊息</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const W=100, H=100, N=W*H;
+  const Tile = { Empty:0, Block:1, Storage:2 };
+
+  const WORKER_CARRY_CAP=10;
+  const CHOP_RATE=1, MINE_RATE=1;
+  const TREE_MIN=18, TREE_MAX=55;
+  const ROCK_MIN=25, ROCK_MAX=70;
+
+  // Deadlock mitigation knobs (fixed for v6)
+  const STORAGE_RING_R = 1;   // dropoff ring radius
+  const PARK_RING_R = 2;      // parking ring radius
+  const PUSH_STUCK_TICKS = 6; // try yield/push after this stuck count
+  const PUSH_NEAR_STORAGE_R = 5; // only do push behavior near storage (prevents weird far-map shoves)
+
+  const canvas=document.getElementById("c");
+  const ctx=canvas.getContext("2d");
+  ctx.imageSmoothingEnabled=false;
+
+  const logEl=document.getElementById("log");
+  const infoEl=document.getElementById("info");
+  const statusTag=document.getElementById("statusTag");
+
+  const inpLumber=document.getElementById("inpLumber");
+  const inpMiner=document.getElementById("inpMiner");
+  const inpScout=document.getElementById("inpScout");
+  const inpTrees=document.getElementById("inpTrees");
+  const inpRocks=document.getElementById("inpRocks");
+  const inpObs=document.getElementById("inpObs");
+  const inpVisW=document.getElementById("inpVisW");
+  const inpVisS=document.getElementById("inpVisS");
+  const inpTile=document.getElementById("inpTile");
+  const inpAstarBudget=document.getElementById("inpAstarBudget");
+  const inpSampleK=document.getElementById("inpSampleK");
+  const inpHz=document.getElementById("inpHz");
+
+  const btnGen=document.getElementById("gen");
+  const btnStart=document.getElementById("start");
+  const btnPause=document.getElementById("pause");
+  const btnStep=document.getElementById("step");
+  const btnClear=document.getElementById("clearlog");
+  btnClear.onclick=()=> (logEl.textContent="");
+
+  function clampInt(v,lo,hi,f){ const n=Number(v); if(!Number.isFinite(n)) return f; return Math.max(lo,Math.min(hi,Math.floor(n))); }
+  function nowStr(){ const t=new Date(); return `[${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}:${String(t.getSeconds()).padStart(2,"0")}]`; }
+  function log(msg){ logEl.textContent = `${nowStr()} ${msg}\n` + logEl.textContent; }
+
+  const idx=(x,y)=> y*W+x;
+  const xOf=(i)=> i%W;
+  const yOf=(i)=> (i/W)|0;
+  const inBounds=(x,y)=> x>=0&&x<W&&y>=0&&y<H;
+  const manhattan=(ax,ay,bx,by)=> Math.abs(ax-bx)+Math.abs(ay-by);
+
+  let TILEPX=7;
+  let TICK_HZ=20;
+  let STEP_TIME=1/TICK_HZ;
+  let ASTAR_BUDGET=12;
+  let SAMPLE_K=45;
+
+  let grid, occupied, explored, visible, visiblePrev;
+  let resType, resIdAt;
+  let trees, rocks;
+  let knownTreeIds, knownRockIds;
+
+  let storage={x:50,y:50,wood:0,ore:0};
+
+  let units=[], workers=[], scouts=[];
+  let preferred={type:null,id:null};
+
+  // --- Dropoff ring + Parking ring + reservations ---
+  let dropTiles=[];              // radius 1 around storage (8 tiles)
+  let parkTiles=[];              // radius 2 ring excluding radius1 & storage
+  let dropReservedBy;            // Int32Array N
+  let parkReservedBy;            // Int32Array N
+
+  function distToStorage(x,y){ return Math.max(Math.abs(x-storage.x), Math.abs(y-storage.y)); } // Chebyshev
+  function isAdjacentToStorage(x,y){
+    return Math.abs(x-storage.x)<=1 && Math.abs(y-storage.y)<=1 && !(x===storage.x && y===storage.y);
+  }
+  function buildRings(){
+    dropTiles=[]; parkTiles=[];
+    for(let dy=-PARK_RING_R; dy<=PARK_RING_R; dy++){
+      for(let dx=-PARK_RING_R; dx<=PARK_RING_R; dx++){
+        const x=storage.x+dx, y=storage.y+dy;
+        if(!inBounds(x,y)) continue;
+        if(dx===0 && dy===0) continue;
+
+        const r = Math.max(Math.abs(dx), Math.abs(dy)); // Chebyshev ring
+        const i=idx(x,y);
+
+        if(grid[i]===Tile.Block) continue;
+        if(resType[i]!==0) continue;
+
+        if(r===STORAGE_RING_R){
+          dropTiles.push(i);
+        } else if(r===PARK_RING_R){
+          parkTiles.push(i);
+        }
+      }
+    }
+  }
+
+  function reserveTileFromList(unitId, list, reservedBy){
+    const u=units[unitId];
+    let best=-1, bestD=1e9;
+    for(const ti of list){
+      const r=reservedBy[ti];
+      if(r!==-1 && r!==unitId) continue;
+      const occ=occupied[ti];
+      if(occ!==-1 && occ!==unitId) continue;
+      const d = Math.abs(xOf(ti)-u.x)+Math.abs(yOf(ti)-u.y);
+      if(d<bestD){ bestD=d; best=ti; }
+    }
+    if(best!==-1){
+      reservedBy[best]=unitId;
+      return best;
+    }
+    return -1;
+  }
+  function releaseReservation(unitId, list, reservedBy){
+    for(const ti of list){
+      if(reservedBy[ti]===unitId) reservedBy[ti]=-1;
+    }
+  }
+
+  // --- layered render ---
+  let baseLayer,fogLayer,baseCtx,fogCtx;
+  function resizeCanvases(){
+    canvas.width=W*TILEPX; canvas.height=H*TILEPX;
+    baseLayer=document.createElement("canvas");
+    fogLayer=document.createElement("canvas");
+    baseLayer.width=fogLayer.width=canvas.width;
+    baseLayer.height=fogLayer.height=canvas.height;
+    baseCtx=baseLayer.getContext("2d");
+    fogCtx=fogLayer.getContext("2d");
+    baseCtx.imageSmoothingEnabled=false;
+    fogCtx.imageSmoothingEnabled=false;
+  }
+  function clearCanvas(c){ c.clearRect(0,0,c.canvas.width,c.canvas.height); }
+
+  function drawStorageAndRings(){
+    // storage tile
+    baseCtx.fillStyle="rgb(220,200,60)";
+    baseCtx.fillRect(storage.x*TILEPX, storage.y*TILEPX, TILEPX, TILEPX);
+
+    // dropoff ring subtle
+    baseCtx.fillStyle="rgba(220,200,60,0.22)";
+    for(const ti of dropTiles){
+      baseCtx.fillRect(xOf(ti)*TILEPX, yOf(ti)*TILEPX, TILEPX, TILEPX);
+    }
+    // parking ring subtle (cooler)
+    baseCtx.fillStyle="rgba(120,190,255,0.10)";
+    for(const ti of parkTiles){
+      baseCtx.fillRect(xOf(ti)*TILEPX, yOf(ti)*TILEPX, TILEPX, TILEPX);
+    }
+  }
+  function drawTreeTile(x,y){ baseCtx.fillStyle="rgb(0,120,0)"; baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX); }
+  function drawRockTile(x,y){ baseCtx.fillStyle="rgb(90,40,140)"; baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX); }
+
+  function eraseTileToBackground(i){
+    const x=xOf(i), y=yOf(i);
+    baseCtx.fillStyle="#111";
+    baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+    if(grid[i]===Tile.Block){
+      baseCtx.fillStyle="rgb(70,70,70)";
+      baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+    } else if(grid[i]===Tile.Storage){
+      drawStorageAndRings();
+    } else {
+      // rings overlay might have been here
+      const r = distToStorage(x,y);
+      if(r===STORAGE_RING_R){
+        baseCtx.fillStyle="rgba(220,200,60,0.22)";
+        baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      } else if(r===PARK_RING_R){
+        baseCtx.fillStyle="rgba(120,190,255,0.10)";
+        baseCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      }
+    }
+  }
+
+  function drawBaseAll(){
+    clearCanvas(baseCtx);
+    baseCtx.fillStyle="#111";
+    baseCtx.fillRect(0,0,baseLayer.width,baseLayer.height);
+
+    baseCtx.fillStyle="rgb(70,70,70)";
+    for(let i=0;i<N;i++){
+      if(grid[i]===Tile.Block){
+        baseCtx.fillRect(xOf(i)*TILEPX, yOf(i)*TILEPX, TILEPX, TILEPX);
+      }
+    }
+    drawStorageAndRings();
+    // resources drawn on discovery
+  }
+
+  function drawFogTile(i){
+    const x=xOf(i), y=yOf(i);
+    if(!explored[i]){
+      fogCtx.fillStyle="rgb(0,0,0)";
+      fogCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      return;
+    }
+    if(!visible[i]){
+      fogCtx.fillStyle="rgba(0,0,0,0.55)";
+      fogCtx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      return;
+    }
+    fogCtx.clearRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+  }
+  function drawFogAll(){
+    clearCanvas(fogCtx);
+    for(let i=0;i<N;i++) drawFogTile(i);
+  }
+
+  // --- pathfinding (A* with heap + stamping) ---
+  const DIRS8=[
+    {dx:1,dy:0,c:1},{dx:-1,dy:0,c:1},{dx:0,dy:1,c:1},{dx:0,dy:-1,c:1},
+    {dx:1,dy:1,c:Math.SQRT2},{dx:1,dy:-1,c:Math.SQRT2},{dx:-1,dy:1,c:Math.SQRT2},{dx:-1,dy:-1,c:Math.SQRT2},
+  ];
+  function octileH(ax,ay,bx,by){
+    const dx=Math.abs(ax-bx), dy=Math.abs(ay-by);
+    const F=Math.SQRT2-1;
+    return (dx<dy)?F*dx+dy:F*dy+dx;
+  }
+  function isWalkableTile(i){
+    if(grid[i]===Tile.Block) return false;
+    if(resType[i]!==0) return false;
+    return true;
+  }
+  function canMoveDiag(fromI,toI){
+    const fx=xOf(fromI), fy=yOf(fromI);
+    const tx=xOf(toI), ty=yOf(toI);
+    const dx=tx-fx, dy=ty-fy;
+    if(Math.abs(dx)===1 && Math.abs(dy)===1){
+      const i1=idx(fx+dx, fy);
+      const i2=idx(fx, fy+dy);
+      if(!isWalkableTile(i1) || !isWalkableTile(i2)) return false;
+    }
+    return true;
+  }
+  class MinHeap{
+    constructor(){ this.nodes=[]; this.fs=[]; }
+    size(){ return this.nodes.length; }
+    push(node,f){
+      const a=this.nodes, b=this.fs;
+      let i=a.length;
+      a.push(node); b.push(f);
+      while(i>0){
+        const p=(i-1)>>1;
+        if(b[p]<=f) break;
+        a[i]=a[p]; b[i]=b[p];
+        i=p;
+      }
+      a[i]=node; b[i]=f;
+    }
+    pop(){
+      const a=this.nodes, b=this.fs;
+      const n=a.length;
+      if(!n) return null;
+      const out=a[0];
+      const lastN=a.pop();
+      const lastF=b.pop();
+      if(n>1){
+        let i=0;
+        while(true){
+          let l=i*2+1, r=l+1;
+          if(l>=a.length) break;
+          let s=l;
+          if(r<a.length && b[r]<b[l]) s=r;
+          if(b[s]>=lastF) break;
+          a[i]=a[s]; b[i]=b[s];
+          i=s;
+        }
+        a[i]=lastN; b[i]=lastF;
+      }
+      return out;
+    }
+  }
+  let gScore,parent,seenStamp,closedStamp,stampCounter;
+  function initAstarArrays(){
+    gScore=new Float32Array(N);
+    parent=new Int32Array(N);
+    seenStamp=new Int32Array(N);
+    closedStamp=new Int32Array(N);
+    stampCounter=1;
+  }
+  function astar(startI,goalI,avoidOccupied=true){
+    const stamp=stampCounter++;
+    if(stampCounter>1e9){ seenStamp.fill(0); closedStamp.fill(0); stampCounter=1; }
+
+    const open=new MinHeap();
+    const sx=xOf(startI), sy=yOf(startI), gx=xOf(goalI), gy=yOf(goalI);
+
+    seenStamp[startI]=stamp;
+    gScore[startI]=0;
+    parent[startI]=-1;
+    open.push(startI, octileH(sx,sy,gx,gy));
+
+    while(open.size()){
+      const cur=open.pop();
+      if(cur===goalI){
+        const path=[];
+        let p=cur;
+        while(p!==-1 && p!==startI){
+          path.push(p);
+          p=parent[p];
+        }
+        path.reverse();
+        return path;
+      }
+      closedStamp[cur]=stamp;
+      const baseG=gScore[cur];
+      const cx=xOf(cur), cy=yOf(cur);
+
+      for(const d of DIRS8){
+        const nx=cx+d.dx, ny=cy+d.dy;
+        if(!inBounds(nx,ny)) continue;
+        const ni=idx(nx,ny);
+
+        if(!isWalkableTile(ni) && ni!==goalI) continue;
+        if(!canMoveDiag(cur,ni)) continue;
+
+        if(avoidOccupied){
+          const occ=occupied[ni];
+          if(occ!==-1 && ni!==goalI) continue;
+        }
+        if(closedStamp[ni]===stamp) continue;
+
+        const tentative=baseG+d.c;
+        if(seenStamp[ni]!==stamp || tentative<gScore[ni]){
+          seenStamp[ni]=stamp;
+          gScore[ni]=tentative;
+          parent[ni]=cur;
+          open.push(ni, tentative + octileH(nx,ny,gx,gy));
+        }
+      }
+    }
+    return null;
+  }
+
+  // --- path request queue ---
+  let pathQueue=[];
+  function requestPath(unitId,goalI){
+    const u=units[unitId];
+    if(!u || u.waitingPath) return;
+    u.waitingPath=true;
+    pathQueue.push({unitId, startI:idx(u.x,u.y), goalI});
+  }
+  function processPathQueue(){
+    let done=0;
+    while(done<ASTAR_BUDGET && pathQueue.length){
+      const job=pathQueue.shift();
+      const u=units[job.unitId];
+      if(!u) continue;
+      u.waitingPath=false;
+
+      const path=astar(job.startI, job.goalI, true);
+      if(!path){
+        u.path=[];
+        u.state="Idle";
+        u.target=null;
+        u.intent=null;
+        u.stuckTicks=0;
+        // release reservations to prevent deadlocks
+        if(u.dropTileI!=null){ releaseReservation(u.id, dropTiles, dropReservedBy); u.dropTileI=null; }
+        if(u.parkTileI!=null){ releaseReservation(u.id, parkTiles, parkReservedBy); u.parkTileI=null; }
+      } else {
+        u.path=path;
+        u.state=u.intent==="ToStorage" ? "ToStorage" : "Move";
+        u.stuckTicks=0;
+      }
+      done++;
+    }
+  }
+
+  // --- fog (incremental) ---
+  let visOffsetsWorker=[], visOffsetsScout=[];
+  function buildOffsets(r){
+    const out=[];
+    for(let dy=-r; dy<=r; dy++){
+      for(let dx=-r; dx<=r; dx++){
+        if(dx*dx+dy*dy<=r*r) out.push({dx,dy});
+      }
+    }
+    return out;
+  }
+  function clearFog(){
+    explored=new Uint8Array(N);
+    visible=new Uint8Array(N);
+    visiblePrev=new Uint8Array(N);
+    knownTreeIds=[];
+    knownRockIds=[];
+  }
+  function discoverResourceAtTile(i){
+    const rt=resType[i];
+    if(rt===1){
+      const id=resIdAt[i];
+      if(id>=0) knownTreeIds.push(id);
+      drawTreeTile(xOf(i), yOf(i));
+    } else if(rt===2){
+      const id=resIdAt[i];
+      if(id>=0) knownRockIds.push(id);
+      drawRockTile(xOf(i), yOf(i));
+    }
+  }
+  function updateVisibilityAndFogLayers(){
+    visible.fill(0);
+    for(const u of units){
+      const offsets = (u.role==="scout") ? visOffsetsScout : visOffsetsWorker;
+      const ux=u.x, uy=u.y;
+      for(const o of offsets){
+        const x=ux+o.dx, y=uy+o.dy;
+        if(!inBounds(x,y)) continue;
+        visible[idx(x,y)]=1;
+      }
+    }
+    const changed=[];
+    const newly=[];
+    for(let i=0;i<N;i++){
+      const v=visible[i], pv=visiblePrev[i];
+      if(v!==pv) changed.push(i);
+      if(v===1 && explored[i]===0){
+        explored[i]=1;
+        newly.push(i);
+      }
+    }
+    for(const i of changed) visiblePrev[i]=visible[i];
+    for(const i of newly){
+      if(resType[i]!==0) discoverResourceAtTile(i);
+      drawFogTile(i);
+    }
+    for(const i of changed) drawFogTile(i);
+  }
+
+  // --- units ---
+  function makeUnit(id,role,x,y){
+    return {
+      id, role, x, y,
+      state:"Idle",
+      intent:null,
+      waitingPath:false,
+      path:[],
+      target:null,
+      carry:0,
+      progress:0,
+      stuckTicks:0,
+      nextScoutThinkTick:0,
+      exploreTarget:null,
+      dropTileI:null,
+      parkTileI:null,
+      nextDropRetryTick:0,
+    };
+  }
+  function rebuildOccupancy(){
+    occupied.fill(-1);
+    for(const u of units) occupied[idx(u.x,u.y)]=u.id;
+  }
+
+  // --- yield / push mechanics ---
+  function isPushableUnit(v){
+    // push only "passive" units to avoid chaos
+    return (v.state==="Idle" || v.state==="QueueStorage" || v.state==="Dropoff");
+  }
+  function findFreeNeighborForUnit(v, avoidI){
+    const vi=idx(v.x,v.y);
+    let best=-1, bestScore=1e9;
+
+    for(const d of DIRS8){
+      const nx=v.x+d.dx, ny=v.y+d.dy;
+      if(!inBounds(nx,ny)) continue;
+      const ni=idx(nx,ny);
+      if(ni===avoidI) continue;
+      if(!isWalkableTile(ni)) continue;
+
+      // don't step onto drop tile reserved by someone else
+      if(dropReservedBy[ni]!==-1 && dropReservedBy[ni]!==v.id) continue;
+      if(parkReservedBy[ni]!==-1 && parkReservedBy[ni]!==v.id) continue;
+
+      if(occupied[ni]!==-1) continue;
+
+      // score: prefer staying near storage if this unit is in storage-related state; else any
+      const score = distToStorage(nx,ny) + Math.abs(nx-v.x)+Math.abs(ny-v.y)*0.2;
+      if(score<bestScore){ bestScore=score; best=ni; }
+    }
+    return best;
+  }
+  function tryYieldOrPush(u, nextI){
+    const vId = occupied[nextI];
+    if(vId===-1) return false;
+    const v = units[vId];
+    if(!v) return false;
+
+    // only near storage to reduce weird global pushing
+    if(distToStorage(u.x,u.y) > PUSH_NEAR_STORAGE_R) return false;
+
+    // swap if v wants to come into u's current tile (rare but useful)
+    if(v.path && v.path.length && v.path[0]===idx(u.x,u.y)){
+      // do swap if both can do it
+      const uCur=idx(u.x,u.y);
+      occupied[uCur]=v.id;
+      occupied[nextI]=u.id;
+      const vx=v.x, vy=v.y;
+      v.x=u.x; v.y=u.y;
+      u.x=xOf(nextI); u.y=yOf(nextI);
+      v.path.shift();
+      u.path.shift();
+      v.stuckTicks=0; u.stuckTicks=0;
+      return true;
+    }
+
+    if(!isPushableUnit(v)) return false;
+
+    const free = findFreeNeighborForUnit(v, nextI);
+    if(free===-1) return false;
+
+    // push v to free neighbor
+    occupied[idx(v.x,v.y)]=-1;
+    v.x=xOf(free); v.y=yOf(free);
+    occupied[free]=v.id;
+
+    // now u can move into nextI
+    occupied[idx(u.x,u.y)]=-1;
+    u.x=xOf(nextI); u.y=yOf(nextI);
+    occupied[nextI]=u.id;
+    u.path.shift();
+    u.stuckTicks=0;
+    return true;
+  }
+
+  function tryStepFromPath(u){
+    if(!u.path || !u.path.length) return false;
+    const nextI=u.path[0];
+    const occ=occupied[nextI];
+
+    if(occ!==-1){
+      u.stuckTicks++;
+      if(u.stuckTicks >= PUSH_STUCK_TICKS){
+        if(tryYieldOrPush(u, nextI)) return true;
+      }
+      return false;
+    }
+
+    // normal move
+    occupied[idx(u.x,u.y)]=-1;
+    u.x=xOf(nextI); u.y=yOf(nextI);
+    u.path.shift();
+    occupied[nextI]=u.id;
+    u.stuckTicks=0;
+    return true;
+  }
+
+  // --- resource targeting ---
+  function adjacentStandTilesForRes(resI){
+    const x=xOf(resI), y=yOf(resI);
+    const out=[];
+    for(let dy=-1; dy<=1; dy++){
+      for(let dx=-1; dx<=1; dx++){
+        if(dx===0 && dy===0) continue;
+        const nx=x+dx, ny=y+dy;
+        if(!inBounds(nx,ny)) continue;
+        const ni=idx(nx,ny);
+        if(!isWalkableTile(ni)) continue;
+        out.push(ni);
+      }
+    }
+    return out;
+  }
+  function chooseBestStandTile(u,resI){
+    const opts=adjacentStandTilesForRes(resI);
+    if(!opts.length) return -1;
+    let best=opts[0], bestD=1e9;
+    for(const i of opts){
+      const d=Math.abs(xOf(i)-u.x)+Math.abs(yOf(i)-u.y);
+      if(d<bestD){ bestD=d; best=i; }
+    }
+    return best;
+  }
+
+  function pickTargetForWorker(u){
+    const type = (u.role==="lumber") ? "tree" : "rock";
+    const known = (type==="tree") ? knownTreeIds : knownRockIds;
+    if(!known.length) return null;
+
+    let preferredId=null;
+    if(preferred.type===type && preferred.id!=null) preferredId=preferred.id;
+
+    const K=Math.min(SAMPLE_K, known.length);
+    let bestId=null, bestScore=Infinity;
+
+    function consider(id){
+      const res = (type==="tree") ? trees[id] : rocks[id];
+      if(!res || !res.alive) return;
+      const ri=idx(res.x,res.y);
+      const stand=chooseBestStandTile(u,ri);
+      if(stand===-1) return;
+
+      const d=manhattan(u.x,u.y,res.x,res.y);
+      let load=0;
+      for(const w of workers){
+        if(w.target && w.target.type===type && w.target.id===id) load++;
+      }
+      let score = d + 3.2*load;
+      if(preferredId!==null && id===preferredId) score *= 0.25;
+      if(score<bestScore){ bestScore=score; bestId=id; }
+    }
+
+    if(preferredId!==null) consider(preferredId);
+    for(let s=0;s<K;s++){
+      const id = known[(Math.random()*known.length)|0];
+      consider(id);
+    }
+
+    if(bestId===null) return null;
+    return {type, id: bestId};
+  }
+
+  function requestMoveToResource(u,target){
+    const res = (target.type==="tree") ? trees[target.id] : rocks[target.id];
+    if(!res || !res.alive) return false;
+    const ri=idx(res.x,res.y);
+    const stand=chooseBestStandTile(u,ri);
+    if(stand===-1) return false;
+    u.target=target;
+    u.intent=null;
+    requestPath(u.id, stand);
+    return true;
+  }
+
+  // --- Storage approach with parking ---
+  function ensureDropReservation(u){
+    // keep if valid
+    if(u.dropTileI!=null && dropReservedBy[u.dropTileI]===u.id) return u.dropTileI;
+    u.dropTileI = reserveTileFromList(u.id, dropTiles, dropReservedBy);
+    return u.dropTileI;
+  }
+  function ensureParkReservation(u){
+    if(u.parkTileI!=null && parkReservedBy[u.parkTileI]===u.id) return u.parkTileI;
+    u.parkTileI = reserveTileFromList(u.id, parkTiles, parkReservedBy);
+    return u.parkTileI;
+  }
+
+  function requestMoveToStorageLogic(u){
+    // If already adjacent => dropoff now
+    if(isAdjacentToStorage(u.x,u.y)){
+      u.state="Dropoff";
+      return;
+    }
+
+    // Try reserve a drop tile
+    const dropI = ensureDropReservation(u);
+    if(dropI !== -1){
+      // if we had a parking reservation, release it (we're now approaching dropoff)
+      if(u.parkTileI!=null){ releaseReservation(u.id, parkTiles, parkReservedBy); u.parkTileI=null; }
+      u.intent="ToStorage";
+      requestPath(u.id, dropI);
+      u.state="ToStorage";
+      return;
+    }
+
+    // Drop tiles full => park
+    const parkI = ensureParkReservation(u);
+    if(parkI !== -1){
+      // waiting area: go park there; then retry drop reservation periodically
+      u.intent="ToPark";
+      requestPath(u.id, parkI);
+      u.state="ToPark";
+      // ensure we retry drop soon
+      u.nextDropRetryTick = tickCount + Math.max(6, (TICK_HZ/2)|0);
+      return;
+    }
+
+    // No parking either => just wait (but should be rare unless ring blocked by obstacles)
+    u.state="QueueStorage";
+    u.intent="ToStorage";
+    u.nextDropRetryTick = tickCount + Math.max(6, (TICK_HZ/2)|0);
+  }
+
+  function doDropoff(u){
+    if(!isAdjacentToStorage(u.x,u.y)){
+      requestMoveToStorageLogic(u);
+      return;
+    }
+    if(u.carry>0){
+      if(u.role==="lumber") storage.wood += u.carry;
+      else storage.ore += u.carry;
+      u.carry=0;
+    }
+    // release drop reservation
+    if(u.dropTileI!=null){ releaseReservation(u.id, dropTiles, dropReservedBy); u.dropTileI=null; }
+    // after dropoff, if this unit was holding a parking reservation, release as well
+    if(u.parkTileI!=null){ releaseReservation(u.id, parkTiles, parkReservedBy); u.parkTileI=null; }
+    u.state="Idle";
+    u.target=null;
+    u.intent=null;
+  }
+
+  function tickWorker(u){
+    if(u.waitingPath) return;
+
+    if(u.state==="Move" || u.state==="ToStorage" || u.state==="ToPark"){
+      const moved=tryStepFromPath(u);
+      if(!moved){
+        if(u.stuckTicks>16){
+          u.stuckTicks=0;
+          if(u.path && u.path.length){
+            requestPath(u.id, u.path[u.path.length-1]);
+          } else {
+            u.state="Idle"; u.target=null; u.intent=null;
+          }
+        }
+        return;
+      }
+      if(!u.path.length){
+        if(u.state==="ToPark"){
+          u.state="Parked";
+        } else if(u.state==="ToStorage"){
+          u.state="Dropoff";
+        } else {
+          u.state="Work";
+        }
+        u.progress=0;
+      }
+      return;
+    }
+
+    if(u.state==="Parked" || u.state==="QueueStorage"){
+      // periodically retry: try to get drop reservation & go
+      if(tickCount >= u.nextDropRetryTick){
+        u.nextDropRetryTick = tickCount + Math.max(6, (TICK_HZ/2)|0);
+        // if we can get a drop tile, go; else keep parked/queued
+        const dropI = ensureDropReservation(u);
+        if(dropI !== -1){
+          // release parking and go
+          if(u.parkTileI!=null){ releaseReservation(u.id, parkTiles, parkReservedBy); u.parkTileI=null; }
+          u.intent="ToStorage";
+          requestPath(u.id, dropI);
+          u.state="ToStorage";
+        }
+      }
+      return;
+    }
+
+    if(u.state==="Dropoff"){
+      doDropoff(u);
+      return;
+    }
+
+    if(u.state==="Work"){
+      if(!u.target){ u.state="Idle"; return; }
+      const res = (u.target.type==="tree") ? trees[u.target.id] : rocks[u.target.id];
+      if(!res || !res.alive){
+        if(u.carry>0) requestMoveToStorageLogic(u);
+        else { u.state="Idle"; u.target=null; }
+        return;
+      }
+
+      if(Math.abs(u.x-res.x)>1 || Math.abs(u.y-res.y)>1 || (u.x===res.x && u.y===res.y)){
+        requestMoveToResource(u, u.target);
+        return;
+      }
+
+      u.progress += STEP_TIME;
+      const rate = (u.target.type==="tree") ? CHOP_RATE : MINE_RATE;
+      while(u.progress>=1.0 && u.carry<WORKER_CARRY_CAP && res.amt>0){
+        u.progress -= 1.0;
+        const take = Math.min(rate, res.amt, WORKER_CARRY_CAP-u.carry);
+        res.amt -= take;
+        u.carry += take;
+      }
+
+      if(res.amt<=0){
+        res.alive=false;
+        const ri=idx(res.x,res.y);
+        resType[ri]=0; resIdAt[ri]=-1;
+        eraseTileToBackground(ri);
+        if(preferred.type===u.target.type && preferred.id===res.id) preferred={type:null,id:null};
+        if(u.carry>0) requestMoveToStorageLogic(u);
+        else { u.state="Idle"; u.target=null; }
+        return;
+      }
+
+      if(u.carry>=WORKER_CARRY_CAP){
+        requestMoveToStorageLogic(u);
+      }
+      return;
+    }
+
+    // Idle
+    if(u.state==="Idle"){
+      // clean stale reservations
+      if(u.dropTileI!=null && dropReservedBy[u.dropTileI]!==u.id) u.dropTileI=null;
+      if(u.parkTileI!=null && parkReservedBy[u.parkTileI]!==u.id) u.parkTileI=null;
+
+      if(u.carry>0){ requestMoveToStorageLogic(u); return; }
+      const target=pickTargetForWorker(u);
+      if(!target) return;
+      const ok=requestMoveToResource(u,target);
+      if(!ok){ u.target=null; return; }
+      return;
+    }
+  }
+
+  function pickFrontierForScout(u){
+    // sample-based frontier as in v5 (stable perf)
+    let best=-1, bestD=1e9;
+    for(let s=0;s<120;s++){
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      const i=idx(x,y);
+      if(!explored[i]) continue;
+      let hasUn=false;
+      for(let dy=-1; dy<=1; dy++){
+        for(let dx=-1; dx<=1; dx++){
+          if(dx===0&&dy===0) continue;
+          const nx=x+dx, ny=y+dy;
+          if(!inBounds(nx,ny)) continue;
+          if(!explored[idx(nx,ny)]) { hasUn=true; break; }
+        }
+        if(hasUn) break;
+      }
+      if(!hasUn) continue;
+      if(grid[i]===Tile.Block) continue;
+      if(!isWalkableTile(i) && grid[i]!==Tile.Storage) continue;
+
+      const d=Math.abs(x-u.x)+Math.abs(y-u.y);
+      if(d<bestD){ bestD=d; best=i; }
+    }
+    return best;
+  }
+  function tickScout(u){
+    if(u.waitingPath) return;
+
+    if(u.state==="Move" || u.state==="Explore"){
+      const moved=tryStepFromPath(u);
+      if(!moved){
+        if(u.stuckTicks>16){
+          u.stuckTicks=0;
+          if(u.path && u.path.length){
+            requestPath(u.id, u.path[u.path.length-1]);
+          } else u.state="Idle";
+        }
+        return;
+      }
+      if(!u.path.length){
+        u.state="Idle";
+        u.exploreTarget=null;
+      }
+      return;
+    }
+
+    if(tickCount>=u.nextScoutThinkTick){
+      u.nextScoutThinkTick = tickCount + Math.max(10, (TICK_HZ|0));
+      const fi=pickFrontierForScout(u);
+      if(fi!==-1){
+        u.exploreTarget=fi;
+        u.intent=null;
+        requestPath(u.id, fi);
+        u.state="Explore";
+      }
+    }
+  }
+
+  // --- generation ---
+  function addObstaclePatches(percent){
+    const target=Math.floor(N*(percent/100));
+    let added=0;
+    const rects=Math.max(3, Math.floor(percent/2));
+    for(let r=0;r<rects;r++){
+      const rw=6+((Math.random()*18)|0);
+      const rh=4+((Math.random()*14)|0);
+      const x0=((Math.random()*(W-rw))|0);
+      const y0=((Math.random()*(H-rh))|0);
+      for(let y=y0;y<y0+rh;y++){
+        for(let x=x0;x<x0+rw;x++){
+          const i=idx(x,y);
+          if(grid[i]!==Tile.Block){ grid[i]=Tile.Block; added++; }
+        }
+      }
+    }
+    let guard=0;
+    while(added<target && guard<300000){
+      guard++;
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      const i=idx(x,y);
+      if(grid[i]===Tile.Block) continue;
+      grid[i]=Tile.Block; added++;
+    }
+    return added;
+  }
+
+  function spawnClusteredPoints(count, occupiedSet, avoid){
+    const clusters=Math.max(4, Math.floor(Math.sqrt(Math.max(1,count))/1.2));
+    const centers=[];
+    let tries=0;
+    while(centers.length<clusters && tries<200000){
+      tries++;
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      const k=`${x},${y}`;
+      if(occupiedSet.has(k)) continue;
+      const i=idx(x,y);
+      if(grid[i]===Tile.Block) continue;
+      if(manhattan(x,y,avoid.x,avoid.y)<avoid.dist) continue;
+      centers.push({x,y});
+    }
+    const used=new Set();
+    const pts=[];
+    function place(x,y){
+      if(!inBounds(x,y)) return false;
+      const k=`${x},${y}`;
+      if(used.has(k) || occupiedSet.has(k)) return false;
+      const i=idx(x,y);
+      if(grid[i]===Tile.Block) return false;
+      used.add(k); pts.push({x,y});
+      return true;
+    }
+    let placed=0, guard2=0;
+    while(placed<count && guard2<800000){
+      guard2++;
+      const c=centers[(Math.random()*centers.length)|0];
+      const r=(Math.random()<0.75)?6:12;
+      const ang=Math.random()*Math.PI*2;
+      const rad=Math.abs((Math.random()+Math.random()+Math.random())/3)*r;
+      let x=Math.round(c.x+Math.cos(ang)*rad);
+      let y=Math.round(c.y+Math.sin(ang)*rad);
+      x += ((Math.random()-0.5)*2)|0;
+      y += ((Math.random()-0.5)*2)|0;
+      if(place(x,y)) placed++;
+    }
+    let guard3=0;
+    while(placed<count && guard3<300000){
+      guard3++;
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      if(place(x,y)) placed++;
+    }
+    return pts;
+  }
+
+  function generate(params){
+    TILEPX=params.tilePx;
+    TICK_HZ=params.tickHz;
+    STEP_TIME=1/TICK_HZ;
+    ASTAR_BUDGET=params.astarBudget;
+    SAMPLE_K=params.sampleK;
+
+    resizeCanvases();
+
+    grid=new Uint8Array(N);
+    occupied=new Int32Array(N); occupied.fill(-1);
+    resType=new Uint8Array(N);
+    resIdAt=new Int32Array(N); resIdAt.fill(-1);
+
+    trees=[];
+    rocks=[];
+    units=[];
+    workers=[];
+    scouts=[];
+    preferred={type:null,id:null};
+
+    storage={x:(W/2)|0, y:(H/2)|0, wood:0, ore:0};
+    grid[idx(storage.x,storage.y)] = Tile.Storage;
+
+    addObstaclePatches(params.obsPercent);
+
+    // clear around storage generously (so rings exist)
+    for(let y=storage.y-4;y<=storage.y+4;y++){
+      for(let x=storage.x-4;x<=storage.x+4;x++){
+        if(!inBounds(x,y)) continue;
+        const i=idx(x,y);
+        grid[i] = (x===storage.x && y===storage.y) ? Tile.Storage : Tile.Empty;
+      }
+    }
+
+    // spawn units
+    const occ=new Set([`${storage.x},${storage.y}`]);
+    function spawnRole(n,role){
+      let created=0;
+      for(let ring=1; created<n && ring<60; ring++){
+        for(let dy=-ring; dy<=ring && created<n; dy++){
+          for(let dx=-ring; dx<=ring && created<n; dx++){
+            if(Math.abs(dx)!==ring && Math.abs(dy)!==ring) continue;
+            const x=storage.x+dx, y=storage.y+dy;
+            if(!inBounds(x,y)) continue;
+            const i=idx(x,y);
+            if(grid[i]===Tile.Block) continue;
+            const k=`${x},${y}`;
+            if(occ.has(k)) continue;
+            const id=units.length;
+            const u=makeUnit(id,role,x,y);
+            units.push(u);
+            if(role==="scout") scouts.push(u); else workers.push(u);
+            occ.add(k);
+            created++;
+          }
+        }
+      }
+      while(created<n){
+        const x=storage.x+1, y=storage.y;
+        const id=units.length;
+        const u=makeUnit(id,role,x,y);
+        units.push(u);
+        if(role==="scout") scouts.push(u); else workers.push(u);
+        created++;
+      }
+    }
+    spawnRole(params.lumberCount,"lumber");
+    spawnRole(params.minerCount,"miner");
+    spawnRole(params.scoutCount,"scout");
+
+    rebuildOccupancy();
+
+    // spawn resources
+    const treePts=spawnClusteredPoints(params.treeCount, occ, {x:storage.x,y:storage.y,dist:10});
+    trees = treePts.map((p,i)=>({id:i,x:p.x,y:p.y,amt:TREE_MIN+((Math.random()*(TREE_MAX-TREE_MIN+1))|0), alive:true}));
+    for(const t of trees){
+      const ti=idx(t.x,t.y);
+      resType[ti]=1; resIdAt[ti]=t.id;
+      occ.add(`${t.x},${t.y}`);
+    }
+    const rockPts=spawnClusteredPoints(params.rockCount, occ, {x:storage.x,y:storage.y,dist:12});
+    rocks = rockPts.map((p,i)=>({id:i,x:p.x,y:p.y,amt:ROCK_MIN+((Math.random()*(ROCK_MAX-ROCK_MIN+1))|0), alive:true}));
+    for(const r of rocks){
+      const ri=idx(r.x,r.y);
+      resType[ri]=2; resIdAt[ri]=r.id;
+    }
+
+    // build rings & reservations
+    buildRings();
+    dropReservedBy=new Int32Array(N); dropReservedBy.fill(-1);
+    parkReservedBy=new Int32Array(N); parkReservedBy.fill(-1);
+
+    // fog
+    visOffsetsWorker=buildOffsets(params.visionWorker);
+    visOffsetsScout=buildOffsets(params.visionScout);
+    clearFog();
+
+    initAstarArrays();
+
+    drawBaseAll();
+    visiblePrev.fill(0);
+    updateVisibilityAndFogLayers();
+    drawFogAll();
+    updateVisibilityAndFogLayers();
+
+    // reset reservations
+    for(const u of units){
+      u.dropTileI=null; u.parkTileI=null; u.nextDropRetryTick=0;
+    }
+
+    pathQueue=[];
+    tickCount=0;
+    simState="READY";
+    setStatus("READY");
+    log(`✅ v6 生成完成：單位=${units.length}（工人${workers.length}、斥侯${scouts.length}）｜Drop=${dropTiles.length}｜Park=${parkTiles.length}`);
+    updateInfo();
+    render();
+  }
+
+  // click preference
+  canvas.addEventListener("click",(ev)=>{
+    if(!grid) return;
+    const rect=canvas.getBoundingClientRect();
+    const mx=((ev.clientX-rect.left)/TILEPX)|0;
+    const my=((ev.clientY-rect.top)/TILEPX)|0;
+    if(!inBounds(mx,my)) return;
+    const i=idx(mx,my);
+    if(!explored[i]) { log(`(點擊) 未探索：(${mx},${my})`); return; }
+    const rt=resType[i];
+    if(rt===1){ preferred={type:"tree",id:resIdAt[i]}; log(`偏好目標：樹#${preferred.id} @(${mx},${my})`); }
+    else if(rt===2){ preferred={type:"rock",id:resIdAt[i]}; log(`偏好目標：礦#${preferred.id} @(${mx},${my})`); }
+    else log(`(點擊) 不是樹/礦：(${mx},${my})`);
+  });
+
+  // sim control
+  let simState="READY";
+  let tickCount=0;
+
+  function setStatus(s){ statusTag.textContent=s; }
+
+  function anyAlive(list){ for(const r of list) if(r.alive) return true; return false; }
+  function allDone(){
+    if(anyAlive(trees) || anyAlive(rocks)) return false;
+    for(const u of workers){
+      if(u.carry>0) return false;
+      if(u.state!=="Idle" && u.state!=="Parked" && u.state!=="QueueStorage") return false;
+    }
+    return true;
+  }
+
+  function tick(){
+    tickCount++;
+
+    processPathQueue();
+
+    for(const s of scouts) tickScout(s);
+    for(const w of workers) tickWorker(w);
+
+    updateVisibilityAndFogLayers();
+
+    if(simState==="RUN" && allDone()){
+      simState="DONE"; setStatus("DONE");
+      log(`✅ 完成：木=${storage.wood}、礦=${storage.ore}`);
+    }
+
+    if((tickCount % (TICK_HZ*3|0))===0){
+      knownTreeIds = knownTreeIds.filter(id => trees[id] && trees[id].alive);
+      knownRockIds = knownRockIds.filter(id => rocks[id] && rocks[id].alive);
+    }
+
+    updateInfo();
+  }
+
+  function render(){
+    if(!grid){
+      ctx.fillStyle="#111"; ctx.fillRect(0,0,canvas.width,canvas.height);
+      return;
+    }
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(baseLayer,0,0);
+
+    // brighten a small subset of visible resources
+    for(let s=0;s<60;s++){
+      const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
+      const i=idx(x,y);
+      if(!visible[i]) continue;
+      if(resType[i]===1){
+        ctx.fillStyle="rgb(0,190,0)"; ctx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      } else if(resType[i]===2){
+        ctx.fillStyle="rgb(160,80,255)"; ctx.fillRect(x*TILEPX,y*TILEPX,TILEPX,TILEPX);
+      }
+    }
+
+    // units (visible only)
+    for(const u of units){
+      const i=idx(u.x,u.y);
+      if(!visible[i]) continue;
+      if(u.role==="lumber") ctx.fillStyle="rgb(80,160,255)";
+      else if(u.role==="miner") ctx.fillStyle="rgb(200,120,255)";
+      else ctx.fillStyle="rgb(255,170,70)";
+
+      ctx.fillRect(u.x*TILEPX,u.y*TILEPX,TILEPX,TILEPX);
+    }
+
+    // show reservations near storage (subtle)
+    for(const ti of dropTiles){
+      const r=dropReservedBy[ti];
+      if(r!==-1 && visible[ti]){
+        ctx.fillStyle="rgba(255,255,255,0.10)";
+        ctx.fillRect(xOf(ti)*TILEPX, yOf(ti)*TILEPX, TILEPX, TILEPX);
+      }
+    }
+    for(const ti of parkTiles){
+      const r=parkReservedBy[ti];
+      if(r!==-1 && visible[ti]){
+        ctx.fillStyle="rgba(120,190,255,0.12)";
+        ctx.fillRect(xOf(ti)*TILEPX, yOf(ti)*TILEPX, TILEPX, TILEPX);
+      }
+    }
+
+    // preferred outline
+    if(preferred.type && preferred.id!=null){
+      let rx=-1, ry=-1;
+      if(preferred.type==="tree"){ const t=trees[preferred.id]; if(t&&t.alive){rx=t.x;ry=t.y;} }
+      else { const r=rocks[preferred.id]; if(r&&r.alive){rx=r.x;ry=r.y;} }
+      if(rx!==-1){
+        const i=idx(rx,ry);
+        if(explored[i]){
+          ctx.strokeStyle="rgba(255,255,255,0.9)";
+          ctx.lineWidth=1;
+          ctx.strokeRect(rx*TILEPX+0.5, ry*TILEPX+0.5, TILEPX-1, TILEPX-1);
+        }
+      }
+    }
+
+    ctx.drawImage(fogLayer,0,0);
+  }
+
+  function countAlive(list){ let c=0; for(const r of list) if(r.alive) c++; return c; }
+  function updateInfo(){
+    const aliveTrees=countAlive(trees||[]);
+    const aliveRocks=countAlive(rocks||[]);
+    const exploredCnt = explored ? explored.reduce((a,v)=>a+v,0) : 0;
+    const exploredPct = Math.round(100*exploredCnt/N);
+
+    let qDrop=0, qPark=0;
+    for(const w of workers){
+      if(w.state==="QueueStorage") qDrop++;
+      if(w.state==="Parked" || w.state==="ToPark") qPark++;
+    }
+
+    infoEl.innerHTML = `
+      <div class="kv">
+        <div class="pill">狀態 <b>${simState}</b></div>
+        <div class="pill">探索度 <b>${exploredPct}%</b></div>
+        <div class="pill">PathQueue <b>${pathQueue.length}</b> / budget ${ASTAR_BUDGET}</div>
+        <div class="pill">Park/Queue <b>${qPark}</b> / <b>${qDrop}</b></div>
+        <div style="margin-top:8px;"><b>倉庫</b>：木=<b>${storage.wood}</b>　礦=<b>${storage.ore}</b></div>
+        <div><b>資源</b>：樹剩 <b>${aliveTrees}</b> / ${trees?trees.length:0}；礦剩 <b>${aliveRocks}</b> / ${rocks?rocks.length:0}</div>
+        <div><b>單位</b>：總 ${units?units.length:0}（工人 ${workers?workers.length:0}，斥侯 ${scouts?scouts.length:0}）</div>
+        <div><b>交付/停車</b>：Drop=${dropTiles.length}｜Park=${parkTiles.length}｜Push after ${PUSH_STUCK_TICKS} stuck (near storage)</div>
+        <div><b>參數</b>：tick ${TICK_HZ}Hz；抽樣K=${SAMPLE_K}；格像素=${TILEPX}px</div>
+      </div>
+    `;
+  }
+
+  function readParams(){
+    return {
+      lumberCount: clampInt(inpLumber.value,0,900,80),
+      minerCount: clampInt(inpMiner.value,0,900,60),
+      scoutCount: clampInt(inpScout.value,0,150,6),
+      treeCount: clampInt(inpTrees.value,0,9000,1400),
+      rockCount: clampInt(inpRocks.value,0,6000,800),
+      obsPercent: clampInt(inpObs.value,0,40,10),
+      visionWorker: clampInt(inpVisW.value,2,24,7),
+      visionScout: clampInt(inpVisS.value,4,36,13),
+      tilePx: clampInt(inpTile.value,4,12,7),
+      astarBudget: clampInt(inpAstarBudget.value,1,80,12),
+      sampleK: clampInt(inpSampleK.value,5,200,45),
+      tickHz: clampInt(inpHz.value,5,60,20),
+    };
+  }
+
+  btnGen.onclick=()=>{
+    const p=readParams();
+    inpLumber.value=p.lumberCount; inpMiner.value=p.minerCount; inpScout.value=p.scoutCount;
+    inpTrees.value=p.treeCount; inpRocks.value=p.rockCount; inpObs.value=p.obsPercent;
+    inpVisW.value=p.visionWorker; inpVisS.value=p.visionScout; inpTile.value=p.tilePx;
+    inpAstarBudget.value=p.astarBudget; inpSampleK.value=p.sampleK; inpHz.value=p.tickHz;
+    generate(p);
+  };
+  btnStart.onclick=()=>{
+    if(!grid){ log("請先按「生成地圖」。"); return; }
+    if(simState==="READY"||simState==="PAUSE"){ simState="RUN"; setStatus("RUN"); log("▶ 開始"); }
+    else if(simState==="DONE") log("已完成。請先生成地圖重來。");
+  };
+  btnPause.onclick=()=>{
+    if(!grid) return;
+    if(simState==="RUN"){ simState="PAUSE"; setStatus("PAUSE"); log("⏸ 暫停"); }
+    else if(simState==="PAUSE"){ simState="RUN"; setStatus("RUN"); log("▶ 繼續"); }
+    else log("目前不在運行中（READY/DONE）。");
+  };
+  btnStep.onclick=()=>{
+    if(!grid) return;
+    if(simState==="RUN"||simState==="DONE") return;
+    const prev=simState;
+    simState="PAUSE"; setStatus("PAUSE");
+    tick();
+    simState=prev; setStatus(prev);
+  };
+
+  // RAF loop
+  let lastTime=performance.now();
+  let acc=0;
+  function raf(t){
+    const dt=(t-lastTime)/1000;
+    lastTime=t;
+    if(simState==="RUN"){
+      acc += dt;
+      const step=1/TICK_HZ;
+      let steps=0;
+      const maxSteps=6;
+      while(acc>=step && steps<maxSteps){
+        tick();
+        acc -= step;
+        steps++;
+      }
+    } else acc=0;
+
+    render();
+    requestAnimationFrame(raf);
+  }
+
+  // Boot
+  resizeCanvases();
+  ctx.fillStyle="#111"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  log("v6：Parking + Yield/Push 解堵。先調參數→生成地圖→開始。");
+  setStatus("READY");
+  updateInfo();
+  requestAnimationFrame(raf);
+})();
+</script>
+</body>
+</html>

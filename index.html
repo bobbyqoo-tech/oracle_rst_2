@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Mini RTS - v7 (Hunters + Wildlife AI + HP/Flee + Leash)</title>
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Arial,"Noto Sans TC",sans-serif;}
+    .wrap{display:grid;grid-template-columns:auto 320px 520px;height:100vh;}
+    canvas{background:#111;image-rendering:pixelated;}
+    .panel{background:#0b0b0b;color:#ddd;padding:12px;overflow:auto;border-left:1px solid #222;}
+    .midpanel{background:#0b0b0b;color:#ddd;padding:12px;overflow:auto;border-left:1px solid #222;}
+    .panel h2{margin:0 0 8px;font-size:16px;}
+    .hint{font-size:12px;color:#aaa;margin:10px 0;line-height:1.45;}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+    .row label{font-size:12px;color:#bbb;display:flex;gap:6px;align-items:center;}
+    .row input{width:96px;background:#0f0f0f;color:#eee;border:1px solid #333;padding:6px 8px;border-radius:6px;}
+    button{background:#222;color:#eee;border:1px solid #333;padding:6px 10px;border-radius:6px;cursor:pointer;}
+    button:hover{background:#2a2a2a;}
+    .tag{display:inline-block;padding:1px 6px;border:1px solid #333;border-radius:999px;font-size:11px;color:#bbb;}
+    .divider{height:1px;background:#1f1f1f;margin:10px 0;}
+    .kv{font-size:13px;line-height:1.45;}
+    .kv b{color:#fff;}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #333;border-radius:999px;font-size:12px;color:#ddd;margin-right:6px;margin-bottom:6px;}
+    .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;white-space:pre-wrap;background:#070707;border:1px solid #222;padding:8px;border-radius:6px;}
+    .hpall{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:11px;white-space:pre-wrap;background:#090909;border:1px solid #222;padding:8px;border-radius:6px;height:calc(100vh - 120px);overflow:auto;}
+    .small{font-size:12px;color:#aaa;margin:8px 0 6px;}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c"></canvas>
+  <div class="midpanel">
+    <h2>單位血量（即時）</h2>
+    <div class="hpall" id="hpAll"></div>
+  </div>
+  <div class="panel">
+    <h2>Mini RTS v7：獵人 + 野生動物 + 血量/逃跑</h2>
+    <div class="hint">
+      玩法：調參數 → 生成地圖 → 開始。點選資源可設定偏好目標。<br/>
+      <b>獵人</b>：追擊野生動物，擊殺後採集肉並回倉庫交付。<br/>
+      <b>野生動物</b>：在家附近徘徊，被攻擊會追擊但不超出 leash。<br/>
+      <b>血量逃跑</b>：工人/獵人 HP < 20% 會逃到倉庫旁安全區。<br/>
+      <b>獵人回血</b>：在 parking ring 每秒回 1 HP，消耗 1 食物；回到 60% HP 繼續工作。
+    </div>
+
+    <div class="row" style="margin:6px 0 8px;">
+      <label>伐木工 <input id="inpLumber" type="number" min="0" max="900" value="60"/></label>
+      <label>採礦工 <input id="inpMiner" type="number" min="0" max="900" value="50"/></label>
+      <label>獵人 <input id="inpHunter" type="number" min="0" max="900" value="30"/></label>
+      <label>斥侯 <input id="inpScout" type="number" min="0" max="200" value="6"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>伐木HP <input id="inpHPLumber" type="number" min="1" max="200" value="10"/></label>
+      <label>採礦HP <input id="inpHPMiner" type="number" min="1" max="200" value="10"/></label>
+      <label>獵人HP <input id="inpHPHunter" type="number" min="1" max="200" value="12"/></label>
+      <label>斥侯HP <input id="inpHPScout" type="number" min="1" max="200" value="8"/></label>
+      <label>動物HP <input id="inpHPAnimal" type="number" min="1" max="200" value="18"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>樹木數量 <input id="inpTrees" type="number" min="0" max="9000" value="1200"/></label>
+      <label>礦石數量 <input id="inpRocks" type="number" min="0" max="6000" value="750"/></label>
+      <label>野生動物 <input id="inpAnimals" type="number" min="0" max="3000" value="220"/></label>
+      <label>障礙(%) <input id="inpObs" type="number" min="0" max="40" value="10"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>工人視野 <input id="inpVisW" type="number" min="2" max="24" value="7"/></label>
+      <label>斥侯視野 <input id="inpVisS" type="number" min="4" max="36" value="13"/></label>
+      <label>格像素 <input id="inpTile" type="number" min="4" max="12" value="7"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>A* / tick <input id="inpAstarBudget" type="number" min="1" max="80" value="12"/></label>
+      <label>目標抽樣K <input id="inpSampleK" type="number" min="5" max="200" value="45"/></label>
+      <label>Tick Hz <input id="inpHz" type="number" min="5" max="60" value="20"/></label>
+    </div>
+
+    <div class="row" style="margin-bottom:6px;">
+      <button id="gen">生成地圖</button>
+      <button id="start">開始</button>
+      <button id="pause">暫停</button>
+      <button id="step">單步</button>
+      <button id="clearlog">清除訊息</button>
+      <span class="tag" id="statusTag">READY</span>
+    </div>
+
+    <div class="kv" id="info"></div>
+    <div class="small">事件訊息</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
+
+

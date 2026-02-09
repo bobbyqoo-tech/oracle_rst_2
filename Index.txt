@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mini RTS - Lumber MVP</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Arial, "Noto Sans TC", sans-serif; }
+    .wrap { display: grid; grid-template-columns: auto 360px; height: 100vh; }
+    canvas { background: #111; image-rendering: pixelated; }
+    .panel { background:#0b0b0b; color:#ddd; padding:12px; overflow:auto; border-left:1px solid #222; }
+    .panel h2 { margin: 0 0 8px; font-size: 16px; }
+    .kv { font-size: 13px; line-height: 1.5; }
+    .kv b { color: #fff; }
+    .hint { font-size: 12px; color:#aaa; margin: 10px 0; }
+    .log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; white-space: pre-wrap; background:#070707; border:1px solid #222; padding:8px; border-radius:6px; }
+    .btnrow { display:flex; gap:8px; flex-wrap:wrap; margin: 8px 0 10px; }
+    button { background:#222; color:#eee; border:1px solid #333; padding:6px 10px; border-radius:6px; cursor:pointer; }
+    button:hover { background:#2a2a2a; }
+    .small { font-size: 12px; color:#aaa; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c"></canvas>
+
+  <div class="panel">
+    <h2>Mini RTS：伐木 MVP</h2>
+    <div class="hint">
+      操作：<b>點樹</b>下達命令（收集該樹木材）。伐木工會自動：走過去 → 砍 → 回倉庫卸貨 → 繼續直到砍完。<br/>
+      你也可以按「隨機重生」換地圖。
+    </div>
+
+    <div class="btnrow">
+      <button id="respawn">隨機重生</button>
+      <button id="pause">暫停</button>
+      <button id="step">單步</button>
+      <button id="clearlog">清除訊息</button>
+    </div>
+
+    <div class="kv" id="info"></div>
+    <div class="small" style="margin:8px 0 6px;">事件訊息</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ======== Config ========
+  const W = 100, H = 100;          // world size in tiles
+  const TILE = 7;                  // pixels per tile (change for zoom)
+  const CANVAS_W = W * TILE;
+  const CANVAS_H = H * TILE;
+
+  const TREE_COUNT = 60;
+  const TREE_WOOD_MIN = 20;
+  const TREE_WOOD_MAX = 45;
+
+  const WORKER_CARRY_CAP = 10;
+  const CHOP_RATE = 1;             // wood per second
+  const STEP_TIME = 1/20;          // simulation dt seconds per tick (20 Hz)
+  const MOVE_EVERY_TICKS = 1;      // tiles per tick; keep 1 for simple
+
+  // ======== Types ========
+  const Tile = {
+    Empty: 0,
+    Block: 1,   // (not used now, reserved)
+  };
+
+  // ======== Canvas init ========
+  const canvas = document.getElementById("c");
+  canvas.width = CANVAS_W;
+  canvas.height = CANVAS_H;
+  const ctx = canvas.getContext("2d");
+
+  // Make it crisp
+  ctx.imageSmoothingEnabled = false;
+
+  // ======== UI ========
+  const infoEl = document.getElementById("info");
+  const logEl = document.getElementById("log");
+  const btnRespawn = document.getElementById("respawn");
+  const btnPause = document.getElementById("pause");
+  const btnStep = document.getElementById("step");
+  const btnClear = document.getElementById("clearlog");
+
+  function log(msg) {
+    const t = new Date();
+    const hh = String(t.getHours()).padStart(2, "0");
+    const mm = String(t.getMinutes()).padStart(2, "0");
+    const ss = String(t.getSeconds()).padStart(2, "0");
+    logEl.textContent = `[${hh}:${mm}:${ss}] ${msg}\n` + logEl.textContent;
+  }
+
+  btnClear.onclick = () => (logEl.textContent = "");
+
+  // ======== World data ========
+  let grid; // Uint8Array
+  let trees; // array of {id,x,y,wood}
+  let storage; // {x,y,totalWood}
+  let worker; // {x,y,carry,state,targetTreeId,path, ...}
+  let running = true;
+  let tickCount = 0;
+
+  // ======== Helpers ========
+  const idx = (x,y) => y*W + x;
+  const inBounds = (x,y) => x>=0 && x<W && y>=0 && y<H;
+
+  function isWalkable(x,y) {
+    if (!inBounds(x,y)) return false;
+    // Can't walk on trees (treat as obstacle)
+    for (const tr of trees) if (tr.wood > 0 && tr.x === x && tr.y === y) return false;
+    // Storage is walkable (stand on it)
+    return grid[idx(x,y)] !== Tile.Block;
+  }
+
+  function manhattan(a,b) {
+    return Math.abs(a.x-b.x) + Math.abs(a.y-b.y);
+  }
+
+  // ======== A* Pathfinding (grid) ========
+  function astar(start, goal) {
+    // If goal itself is not walkable, still allow if it's storage (walkable anyway) —
+    // For tree, we path to a neighbor (handled outside).
+    if (!inBounds(start.x,start.y) || !inBounds(goal.x,goal.y)) return null;
+
+    const open = [];
+    const openMap = new Map(); // key -> node
+    const cameFrom = new Map();
+    const gScore = new Map();
+
+    const key = (p) => `${p.x},${p.y}`;
+
+    const startKey = key(start);
+    gScore.set(startKey, 0);
+
+    const startNode = { x:start.x, y:start.y, f: manhattan(start, goal), g:0 };
+    open.push(startNode);
+    openMap.set(startKey, startNode);
+
+    const dirs = [
+      {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}
+    ];
+
+    function popLowestF() {
+      let bestI = 0;
+      for (let i=1;i<open.length;i++){
+        if (open[i].f < open[bestI].f) bestI = i;
+      }
+      const n = open.splice(bestI,1)[0];
+      openMap.delete(key(n));
+      return n;
+    }
+
+    while (open.length) {
+      const cur = popLowestF();
+      if (cur.x === goal.x && cur.y === goal.y) {
+        // reconstruct
+        const path = [{x:cur.x,y:cur.y}];
+        let ck = key(cur);
+        while (cameFrom.has(ck)) {
+          const prev = cameFrom.get(ck);
+          path.push(prev);
+          ck = key(prev);
+        }
+        path.reverse();
+        // drop first (current position), we only need steps ahead
+        path.shift();
+        return path;
+      }
+
+      const curKey = key(cur);
+      const curG = gScore.get(curKey);
+
+      for (const d of dirs) {
+        const nx = cur.x + d.dx;
+        const ny = cur.y + d.dy;
+        if (!isWalkable(nx,ny)) continue;
+
+        const nk = `${nx},${ny}`;
+        const tentative = curG + 1;
+
+        const prevG = gScore.has(nk) ? gScore.get(nk) : Infinity;
+        if (tentative < prevG) {
+          cameFrom.set(nk, {x:cur.x,y:cur.y});
+          gScore.set(nk, tentative);
+          const f = tentative + Math.abs(nx-goal.x) + Math.abs(ny-goal.y);
+
+          if (!openMap.has(nk)) {
+            const nn = {x:nx,y:ny,g:tentative,f};
+            open.push(nn);
+            openMap.set(nk, nn);
+          } else {
+            // update existing node's scores
+            const nn = openMap.get(nk);
+            nn.g = tentative;
+            nn.f = f;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // Find a walkable neighbor tile around a tree to stand and chop
+  function bestAdjacentToTree(tree) {
+    const candidates = [
+      {x:tree.x+1,y:tree.y},{x:tree.x-1,y:tree.y},{x:tree.x,y:tree.y+1},{x:tree.x,y:tree.y-1}
+    ].filter(p => isWalkable(p.x,p.y));
+    if (!candidates.length) return null;
+
+    // choose closest to worker to reduce path
+    candidates.sort((a,b)=>manhattan(a,worker)-manhattan(b,worker));
+    return candidates[0];
+  }
+
+  function treeById(id) {
+    return trees.find(t => t.id === id) || null;
+  }
+
+  // ======== Game setup ========
+  function spawn() {
+    grid = new Uint8Array(W*H);
+    trees = [];
+    storage = { x: Math.floor(W/2), y: Math.floor(H/2), totalWood: 0 };
+
+    // worker near storage
+    worker = {
+      x: storage.x + 2,
+      y: storage.y,
+      carry: 0,
+      state: "Idle",
+      targetTreeId: null,
+      path: [],
+      chopProgress: 0,
+      lastCommand: "(none)"
+    };
+
+    // place trees randomly (avoid storage & worker)
+    let placed = 0;
+    let tries = 0;
+    while (placed < TREE_COUNT && tries < 100000) {
+      tries++;
+      const x = Math.floor(Math.random()*W);
+      const y = Math.floor(Math.random()*H);
+      if ((x === storage.x && y === storage.y) || (x === worker.x && y === worker.y)) continue;
+
+      // don't stack trees
+      if (trees.some(t => t.x===x && t.y===y)) continue;
+
+      trees.push({
+        id: placed,
+        x, y,
+        wood: TREE_WOOD_MIN + Math.floor(Math.random()*(TREE_WOOD_MAX - TREE_WOOD_MIN + 1))
+      });
+      placed++;
+    }
+
+    log("地圖已生成：點一棵樹下達收集命令。");
+    updateInfo();
+  }
+
+  btnRespawn.onclick = () => { spawn(); render(); };
+  btnPause.onclick = () => {
+    running = !running;
+    btnPause.textContent = running ? "暫停" : "繼續";
+    log(running ? "繼續模擬" : "已暫停");
+  };
+  btnStep.onclick = () => {
+    if (running) return;
+    tick();
+    render();
+  };
+
+  // ======== Command: click to assign a tree ========
+  canvas.addEventListener("click", (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = Math.floor((ev.clientX - rect.left) / TILE);
+    const my = Math.floor((ev.clientY - rect.top) / TILE);
+    if (!inBounds(mx,my)) return;
+
+    const tr = trees.find(t => t.wood > 0 && t.x===mx && t.y===my);
+    if (!tr) {
+      log(`(點擊) 這裡不是樹：(${mx},${my})`);
+      return;
+    }
+
+    issueChopCommand(tr.id);
+  });
+
+  function issueChopCommand(treeId) {
+    const tr = treeById(treeId);
+    if (!tr || tr.wood <= 0) {
+      log("命令失效：樹不存在或已砍完。");
+      return;
+    }
+
+    worker.targetTreeId = treeId;
+    worker.lastCommand = `收集樹#${treeId} @(${tr.x},${tr.y})`;
+    log(`命令：${worker.lastCommand}`);
+
+    // Re-plan immediately
+    planToTree();
+  }
+
+  function planToTree() {
+    const tr = treeById(worker.targetTreeId);
+    if (!tr || tr.wood <= 0) {
+      worker.state = "Idle";
+      worker.targetTreeId = null;
+      worker.path = [];
+      log("目標樹已不存在，回到 Idle。");
+      return;
+    }
+
+    const stand = bestAdjacentToTree(tr);
+    if (!stand) {
+      worker.state = "Idle";
+      worker.path = [];
+      log("找不到可站的位置靠近樹（被堵住）。");
+      return;
+    }
+
+    const path = astar({x:worker.x,y:worker.y}, stand);
+    if (!path) {
+      worker.state = "Idle";
+      worker.path = [];
+      log("A* 尋路失敗：到不了樹旁邊。");
+      return;
+    }
+
+    worker.path = path;
+    worker.state = "ToTree";
+  }
+
+  function planToStorage() {
+    const path = astar({x:worker.x,y:worker.y}, {x:storage.x,y:storage.y});
+    if (!path) {
+      worker.state = "Idle";
+      worker.path = [];
+      log("A* 尋路失敗：回不了倉庫。");
+      return;
+    }
+    worker.path = path;
+    worker.state = "ToStorage";
+  }
+
+  // ======== Simulation tick ========
+  function tick() {
+    tickCount++;
+
+    // Move one step along path
+    function stepMove() {
+      if (!worker.path || worker.path.length === 0) return false;
+      const next = worker.path.shift();
+      worker.x = next.x;
+      worker.y = next.y;
+      return true;
+    }
+
+    // State machine
+    if (worker.state === "Idle") {
+      // If we have a target, try plan
+      if (worker.targetTreeId !== null) planToTree();
+    }
+    else if (worker.state === "ToTree") {
+      if (tickCount % MOVE_EVERY_TICKS === 0) stepMove();
+      if (!worker.path || worker.path.length === 0) {
+        worker.state = "Chop";
+        worker.chopProgress = 0;
+        log("抵達樹旁，開始砍樹。");
+      }
+    }
+    else if (worker.state === "Chop") {
+      const tr = treeById(worker.targetTreeId);
+      if (!tr || tr.wood <= 0) {
+        log("樹已砍完。");
+        // if carrying something, go drop; else idle
+        if (worker.carry > 0) {
+          planToStorage();
+        } else {
+          worker.state = "Idle";
+          worker.targetTreeId = null;
+        }
+        return;
+      }
+
+      // ensure still adjacent; if not, replan
+      const adjacent = (Math.abs(worker.x-tr.x) + Math.abs(worker.y-tr.y)) === 1;
+      if (!adjacent) {
+        log("不在樹旁，重新尋路。");
+        planToTree();
+        return;
+      }
+
+      // accumulate chopping progress in seconds
+      worker.chopProgress += STEP_TIME;
+
+      // Each second, transfer CHOP_RATE wood (integer)
+      while (worker.chopProgress >= 1.0 && worker.carry < WORKER_CARRY_CAP && tr.wood > 0) {
+        worker.chopProgress -= 1.0;
+        const take = Math.min(CHOP_RATE, tr.wood, WORKER_CARRY_CAP - worker.carry);
+        tr.wood -= take;
+        worker.carry += take;
+      }
+
+      if (worker.carry >= WORKER_CARRY_CAP) {
+        log(`背包滿載(${worker.carry})，回倉庫卸貨。`);
+        planToStorage();
+      } else if (tr.wood <= 0) {
+        log("樹木砍完。準備回倉庫（若有攜帶木材）。");
+        if (worker.carry > 0) planToStorage();
+        else { worker.state = "Idle"; worker.targetTreeId = null; }
+      }
+    }
+    else if (worker.state === "ToStorage") {
+      if (tickCount % MOVE_EVERY_TICKS === 0) stepMove();
+      if (!worker.path || worker.path.length === 0) {
+        worker.state = "Dropoff";
+      }
+    }
+    else if (worker.state === "Dropoff") {
+      // on storage
+      if (worker.x === storage.x && worker.y === storage.y) {
+        if (worker.carry > 0) {
+          storage.totalWood += worker.carry;
+          log(`卸貨 +${worker.carry}，倉庫總木材=${storage.totalWood}`);
+          worker.carry = 0;
+        }
+        // if target tree still exists, continue; otherwise idle
+        const tr = treeById(worker.targetTreeId);
+        if (tr && tr.wood > 0) {
+          planToTree();
+        } else {
+          worker.state = "Idle";
+          worker.targetTreeId = null;
+          log("沒有可繼續的目標，回到 Idle。");
+        }
+      } else {
+        // drifted off storage (shouldn't), replan
+        planToStorage();
+      }
+    }
+
+    updateInfo();
+  }
+
+  // ======== Rendering ========
+  function render() {
+    // background
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+
+    // optional faint grid (costly if too many lines; keep minimal)
+    // draw entities as colored pixels/blocks
+    // Trees
+    for (const tr of trees) {
+      if (tr.wood <= 0) continue;
+      // color depends on remaining wood
+      const r = Math.floor(40 + (tr.wood / TREE_WOOD_MAX) * 30);
+      ctx.fillStyle = `rgb(0,${120+r},0)`;
+      ctx.fillRect(tr.x*TILE, tr.y*TILE, TILE, TILE);
+    }
+
+    // Storage
+    ctx.fillStyle = "rgb(220,200,60)";
+    ctx.fillRect(storage.x*TILE, storage.y*TILE, TILE, TILE);
+
+    // Worker
+    ctx.fillStyle = "rgb(80,160,255)";
+    ctx.fillRect(worker.x*TILE, worker.y*TILE, TILE, TILE);
+
+    // If worker has a path, show it as dots
+    if (worker.path && worker.path.length) {
+      ctx.fillStyle = "rgba(80,160,255,0.35)";
+      for (const p of worker.path) {
+        ctx.fillRect(p.x*TILE + Math.floor(TILE/3), p.y*TILE + Math.floor(TILE/3), Math.max(1, Math.floor(TILE/3)), Math.max(1, Math.floor(TILE/3)));
+      }
+    }
+
+    // highlight target tree
+    if (worker.targetTreeId !== null) {
+      const tr = treeById(worker.targetTreeId);
+      if (tr && tr.wood > 0) {
+        ctx.strokeStyle = "rgba(255,255,255,0.8)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tr.x*TILE+0.5, tr.y*TILE+0.5, TILE-1, TILE-1);
+      }
+    }
+  }
+
+  function updateInfo() {
+    const tr = worker.targetTreeId !== null ? treeById(worker.targetTreeId) : null;
+    const targetText = tr ? `樹#${tr.id} @(${tr.x},${tr.y}), 剩餘木材=${tr.wood}` : "(無)";
+    infoEl.innerHTML = `
+      <div class="kv">
+        <div><b>世界</b>：${W}×${H} tiles（每格 ${TILE}px）</div>
+        <div><b>倉庫</b>：位置=(${storage.x},${storage.y})　總木材=<b>${storage.totalWood}</b></div>
+        <div style="margin-top:6px;"><b>伐木工</b>：位置=(${worker.x},${worker.y})　狀態=<b>${worker.state}</b></div>
+        <div>背包：${worker.carry}/${WORKER_CARRY_CAP}</div>
+        <div>目標：${targetText}</div>
+        <div>最後命令：${worker.lastCommand}</div>
+      </div>
+    `;
+  }
+
+  // ======== Main loop ========
+  function loop() {
+    if (running) tick();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ======== Start ========
+  spawn();
+  render();
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
