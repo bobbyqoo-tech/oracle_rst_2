@@ -500,7 +500,7 @@ function tickBuilder(u){
     if(b.progress>=1){
       b.built=true;
       b.progress=1;
-      buildRings();
+      if(typeof buildRings==="function") buildRings(); else log("建造完成但 buildRings 未載入");
       state.dropReservedBy=new Int32Array(state.constants.W*state.constants.H); state.dropReservedBy.fill(-1);
       state.parkReservedBy=new Int32Array(state.constants.W*state.constants.H); state.parkReservedBy.fill(-1);
       drawBaseAll();
@@ -578,6 +578,12 @@ function tickWorker(u){
   }
 
   if(u.state==="Parked" || u.state==="QueueStorage"){
+    if(!u.flee && u.carry===0){
+      if(u.dropTileI!=null){ releaseReservation(u.id, state.dropTiles, state.dropReservedBy); u.dropTileI=null; }
+      if(u.parkTileI!=null){ releaseReservation(u.id, state.parkTiles, state.parkReservedBy); u.parkTileI=null; }
+      u.state="Idle";
+      return;
+    }
     if(u.flee){
       const b=state.buildings.find(bb=>bb.id===u.storageTargetId) || pickNearestBuilding(u, state.buildings||[]);
       if(b){
