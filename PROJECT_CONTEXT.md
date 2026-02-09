@@ -1,5 +1,7 @@
 # Mini RTS Simulation Demo
 
+> Deprecated on 2026-02-09. Use `PROJECT_CONTEXT_MERGED.md` going forward.
+
 ## Architecture
 - Single file HTML project
 - All logic is inside index.html
