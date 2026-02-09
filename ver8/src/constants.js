@@ -46,6 +46,9 @@ export const constants = {
   DEFAULT_HP_HUNTER: 12,
   DEFAULT_HP_SCOUT: 8,
   DEFAULT_ANIMAL_HP: 18,
+  DEFAULT_HP_BUILDER: 10,
+
+  BUILD_RATE: 0.25,
 
   AGES: ["Ancient", "Classical", "Medieval"],
 

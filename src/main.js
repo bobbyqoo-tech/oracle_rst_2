@@ -35,10 +35,12 @@ const inpLumber=document.getElementById("inpLumber");
 const inpMiner=document.getElementById("inpMiner");
 const inpHunter=document.getElementById("inpHunter");
 const inpScout=document.getElementById("inpScout");
+const inpBuilder=document.getElementById("inpBuilder");
 const inpHPLumber=document.getElementById("inpHPLumber");
 const inpHPMiner=document.getElementById("inpHPMiner");
 const inpHPHunter=document.getElementById("inpHPHunter");
 const inpHPScout=document.getElementById("inpHPScout");
+const inpHPBuilder=document.getElementById("inpHPBuilder");
 const inpHPAnimal=document.getElementById("inpHPAnimal");
 const inpTrees=document.getElementById("inpTrees");
 const inpRocks=document.getElementById("inpRocks");
@@ -175,10 +177,12 @@ function readParams(){
     minerCount: clampInt(inpMiner.value,0,900,10),
     hunterCount: clampInt(inpHunter.value,0,900,10),
     scoutCount: clampInt(inpScout.value,0,200,6),
+    builderCount: clampInt(inpBuilder.value,0,200,2),
     hpLumber: clampInt(inpHPLumber.value,1,200,10),
     hpMiner: clampInt(inpHPMiner.value,1,200,10),
     hpHunter: clampInt(inpHPHunter.value,1,200,12),
     hpScout: clampInt(inpHPScout.value,1,200,8),
+    hpBuilder: clampInt(inpHPBuilder.value,1,200,10),
     hpAnimal: clampInt(inpHPAnimal.value,1,200,18),
     treeCount: clampInt(inpTrees.value,0,9000,500),
     rockCount: clampInt(inpRocks.value,0,6000,200),
@@ -195,8 +199,8 @@ function readParams(){
 
 btnGen.onclick=()=>{
   const p=readParams();
-  inpLumber.value=p.lumberCount; inpMiner.value=p.minerCount; inpHunter.value=p.hunterCount; inpScout.value=p.scoutCount;
-  inpHPLumber.value=p.hpLumber; inpHPMiner.value=p.hpMiner; inpHPHunter.value=p.hpHunter; inpHPScout.value=p.hpScout; inpHPAnimal.value=p.hpAnimal;
+  inpLumber.value=p.lumberCount; inpMiner.value=p.minerCount; inpHunter.value=p.hunterCount; inpScout.value=p.scoutCount; inpBuilder.value=p.builderCount;
+  inpHPLumber.value=p.hpLumber; inpHPMiner.value=p.hpMiner; inpHPHunter.value=p.hpHunter; inpHPScout.value=p.hpScout; inpHPBuilder.value=p.hpBuilder; inpHPAnimal.value=p.hpAnimal;
   inpTrees.value=p.treeCount; inpRocks.value=p.rockCount; inpAnimals.value=p.animalCount; inpObs.value=p.obsPercent;
   inpVisW.value=p.visionWorker; inpVisS.value=p.visionScout; inpTile.value=p.tilePx;
   inpAstarBudget.value=p.astarBudget; inpSampleK.value=p.sampleK; inpHz.value=p.tickHz;

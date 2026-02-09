@@ -49,6 +49,13 @@ function clearCanvas(c){ c.clearRect(0,0,c.canvas.width,c.canvas.height); }
 
 function drawStorageAndRings(){
   for(const b of state.buildings){
+    if(!b.built){
+      state.baseCtx.fillStyle="rgb(90,90,90)";
+      state.baseCtx.fillRect(b.x*state.TILEPX, b.y*state.TILEPX, state.TILEPX, state.TILEPX);
+      state.baseCtx.strokeStyle="rgba(255,255,255,0.25)";
+      state.baseCtx.strokeRect(b.x*state.TILEPX+0.5, b.y*state.TILEPX+0.5, state.TILEPX-1, state.TILEPX-1);
+      continue;
+    }
     if(b.type==="town_center") state.baseCtx.fillStyle="rgb(220,200,60)";
     else if(b.type==="lumberyard") state.baseCtx.fillStyle="rgb(120,200,120)";
     else if(b.type==="mining_site") state.baseCtx.fillStyle="rgb(140,120,220)";
@@ -187,7 +194,9 @@ function updateVisibilityAndFogLayers(){
 
 function isWalkableTile(i){
   if(state.grid[i]===state.constants.Tile.Block) return false;
+  if(state.grid[i]===state.constants.Tile.Storage) return false;
   if(state.resType[i]!==state.constants.ResT.None) return false;
+  if(state.buildingAt && state.buildingAt[i]!==-1) return false;
   return true;
 }
 function canMoveDiag(fromI,toI){
@@ -218,6 +227,7 @@ function buildRings(){
   state.dropOwner = new Int32Array(N); state.dropOwner.fill(-1);
   state.parkOwner = new Int32Array(N); state.parkOwner.fill(-1);
   for(const b of state.buildings){
+    if(!b.built) continue;
     b.dropTiles=[]; b.parkTiles=[];
     for(let dy=-state.constants.PARK_RING_R; dy<=state.constants.PARK_RING_R; dy++){
       for(let dx=-state.constants.PARK_RING_R; dx<=state.constants.PARK_RING_R; dx++){
@@ -306,13 +316,10 @@ function addBuilding(type,x,y){
   if(!state.grid) return { ok:false, reason:"no_world" };
   if(!canPlaceBuilding(x,y)) return { ok:false, reason:"blocked" };
   const id=state.buildings.length;
-  const b={id,type,x,y,dropTiles:[],parkTiles:[]};
+  const b={id,type,x,y,dropTiles:[],parkTiles:[],built:false,progress:0};
   state.buildings.push(b);
   if(state.buildingAt) state.buildingAt[idx(x,y)]=id;
   state.grid[idx(x,y)] = state.constants.Tile.Storage;
-  buildRings();
-  state.dropReservedBy=new Int32Array(N); state.dropReservedBy.fill(-1);
-  state.parkReservedBy=new Int32Array(N); state.parkReservedBy.fill(-1);
   drawBaseAll();
   return { ok:true, id };
 }
@@ -322,9 +329,10 @@ function roleMaxHP(role){
   if(role==="miner") return state.HP_MINER;
   if(role==="hunter") return state.HP_HUNTER;
   if(role==="scout") return state.HP_SCOUT;
+  if(role==="builder") return state.HP_BUILDER;
   return 10;
 }
-function isWorkerRole(role){ return role==="lumber"||role==="miner"||role==="hunter"; }
+function isWorkerRole(role){ return role==="lumber"||role==="miner"||role==="hunter"||role==="builder"; }
 
 function makeUnit(id,role,x,y){
   const maxHP=roleMaxHP(role);
@@ -487,6 +495,7 @@ function generate(params){
   state.HP_MINER=params.hpMiner;
   state.HP_HUNTER=params.hpHunter;
   state.HP_SCOUT=params.hpScout;
+  state.HP_BUILDER=params.hpBuilder;
   state.ANIMAL_HP=params.hpAnimal;
   state.chopRate=state.constants.CHOP_RATE;
   state.mineRate=state.constants.MINE_RATE;
@@ -515,7 +524,7 @@ function generate(params){
   state.storage={x:centerX, y:centerY, wood:0, ore:0, food:0};
   state.buildings=[];
   state.buildingAt=new Int32Array(N); state.buildingAt.fill(-1);
-  const town={id:0,type:"town_center",x:centerX,y:centerY,dropTiles:[],parkTiles:[]};
+  const town={id:0,type:"town_center",x:centerX,y:centerY,dropTiles:[],parkTiles:[],built:true,progress:1};
   state.buildings.push(town);
   state.buildingAt[idx(centerX,centerY)] = town.id;
 
@@ -567,6 +576,7 @@ function generate(params){
   spawnRole(params.minerCount,"miner");
   spawnRole(params.hunterCount,"hunter");
   spawnRole(params.scoutCount,"scout");
+  spawnRole(params.builderCount,"builder");
 
   rebuildOccupancy();
 

@@ -20,6 +20,7 @@ function roleAbbr(role){
   if(role==="miner") return "M";
   if(role==="hunter") return "H";
   if(role==="scout") return "S";
+  if(role==="builder") return "B";
   return "U";
 }
 function hpBar(hp,max, w=12){
@@ -38,11 +39,11 @@ function getTownCenter(){
 function getCandidateBuildingsForRole(role){
   const out=[];
   if(role==="lumber"){
-    for(const b of state.buildings) if(b.type==="lumberyard") out.push(b);
+    for(const b of state.buildings) if(b.type==="lumberyard" && b.built) out.push(b);
   } else if(role==="miner"){
-    for(const b of state.buildings) if(b.type==="mining_site") out.push(b);
+    for(const b of state.buildings) if(b.type==="mining_site" && b.built) out.push(b);
   } else if(role==="hunter"){
-    for(const b of state.buildings) if(b.type==="granary") out.push(b);
+    for(const b of state.buildings) if(b.type==="granary" && b.built) out.push(b);
   }
   const town=getTownCenter();
   if(town && !out.includes(town)) out.push(town);
@@ -86,7 +87,7 @@ function updateInfo(){
       <div style="margin-top:8px;"><b>倉庫</b>：木=<b>${state.storage.wood}</b>　礦=<b>${state.storage.ore}</b>　食物=<b>${state.storage.food}</b></div>
       <div><b>資源</b>：樹<b>${aliveTrees}</b> / ${state.trees?state.trees.length:0}　礦<b>${aliveRocks}</b> / ${state.rocks?state.rocks.length:0}　肉<b>${aliveMeats}</b></div>
       <div><b>動物</b>：存活<b>${aliveAnimals}</b> / ${state.animals?state.animals.length:0}</div>
-      <div><b>單位</b>：總數 ${state.units?state.units.length:0}　工人/獵人 ${state.workers?state.workers.length:0}　斥侯 ${state.scouts?state.scouts.length:0}</div>
+      <div><b>單位</b>：總數 ${state.units?state.units.length:0}　工人/獵人/建築工 ${state.workers?state.workers.length:0}　斥侯 ${state.scouts?state.scouts.length:0}</div>
       <div><b>參數</b>：tick ${state.TICK_HZ}Hz　抽樣K=${state.SAMPLE_K}　格像素=${state.TILEPX}px　逃跑<20%</div>
       <div><b>時代</b>：${state.constants.AGES[state.ageIndex]}　<b>伐木效率</b> x${state.chopRate.toFixed(2)}　<b>採礦效率</b> x${state.mineRate.toFixed(2)}</div>
     </div>
@@ -368,6 +369,26 @@ function pickTargetForWorker(u){
   return null;
 }
 
+function pickBuildTarget(u){
+  let best=null, bestD=1e9;
+  for(const b of state.buildings){
+    if(b.built) continue;
+    const d=manhattan(u.x,u.y,b.x,b.y);
+    if(d<bestD){ bestD=d; best=b; }
+  }
+  if(!best) return null;
+  return {type:"build", id:best.id};
+}
+
+function requestMoveToBuilding(u, b){
+  const stand=chooseBestStandTile(u, idx(b.x,b.y));
+  if(stand===-1) return false;
+  u.target={type:"build", id:b.id};
+  u.intent=null;
+  requestPath(u.id, stand);
+  return true;
+}
+
 function tryStepFromPath(u){
   if(!u.path || !u.path.length){ u.state="Idle"; return false; }
   const nextI=u.path[0];
@@ -434,6 +455,69 @@ function tryYieldOrPush(u, nextI){
     }
   }
   return false;
+}
+
+function tickBuilder(u){
+  if(u.dead) return;
+  if(u.waitingPath) return;
+
+  if(u.flee){
+    if(u.state==="Fight"){ u.state="Idle"; u.target=null; }
+    if(u.state==="Idle" || u.state==="Work" || u.state==="Flee"){ requestFlee(u); }
+  }
+  if(u.flee) tickWorkerFleeRecovery(u);
+
+  if(u.state==="Move" || u.state==="ToStorage" || u.state==="ToPark"){
+    const moved=tryStepFromPath(u);
+    if(!moved){
+      if(u.stuckTicks>state.constants.PUSH_STUCK_TICKS && tryYieldOrPush(u, u.path[0])) return;
+      if(u.stuckTicks>16){
+        u.stuckTicks=0;
+        if(u.path && u.path.length){
+          requestPath(u.id, u.path[u.path.length-1]);
+        } else {
+          u.state="Idle"; u.target=null; u.intent=null;
+        }
+      }
+      if(u.flee && u.stuckTicks>8){ requestFlee(u); }
+      return;
+    }
+    if(!u.path.length){
+      u.state="Work";
+      u.progress=0;
+    }
+    return;
+  }
+
+  if(u.state==="Work"){
+    if(!u.target || u.target.type!=="build"){ u.state="Idle"; return; }
+    const b=state.buildings.find(bb=>bb.id===u.target.id);
+    if(!b || b.built){ u.state="Idle"; u.target=null; return; }
+    if(cheb(u.x,u.y,b.x,b.y)>1){ requestMoveToBuilding(u, b); return; }
+    b.progress += state.constants.BUILD_RATE * state.STEP_TIME;
+    if(b.progress>=1){
+      b.built=true;
+      b.progress=1;
+      buildRings();
+      state.dropReservedBy=new Int32Array(state.constants.W*state.constants.H); state.dropReservedBy.fill(-1);
+      state.parkReservedBy=new Int32Array(state.constants.W*state.constants.H); state.parkReservedBy.fill(-1);
+      drawBaseAll();
+      log(`建造完成：${b.type} @(${b.x},${b.y})`);
+      u.state="Idle";
+      u.target=null;
+    }
+    return;
+  }
+
+  if(u.state==="Idle"){
+    if(u.flee){ requestFlee(u); return; }
+    const t=pickBuildTarget(u);
+    if(!t) return;
+    const b=state.buildings.find(bb=>bb.id===t.id);
+    if(!b) return;
+    requestMoveToBuilding(u, b);
+    u.state="Move";
+  }
 }
 
 function tickWorker(u){
@@ -895,7 +979,10 @@ function tick(){
 
   for(const a of state.animals) tickAnimal(a);
   for(const s of state.scouts) tickScout(s);
-  for(const w of state.workers) tickWorker(w);
+  for(const w of state.workers){
+    if(w.role==="builder") tickBuilder(w);
+    else tickWorker(w);
+  }
 
   updateVisibilityAndFogLayers();
 
@@ -951,6 +1038,7 @@ function render(){
     if(u.role==="lumber") state.ctx.fillStyle="rgb(80,160,255)";
     else if(u.role==="miner") state.ctx.fillStyle="rgb(200,120,255)";
     else if(u.role==="hunter") state.ctx.fillStyle="rgb(100,220,160)";
+    else if(u.role==="builder") state.ctx.fillStyle="rgb(200,200,90)";
     else state.ctx.fillStyle="rgb(255,170,70)";
     state.ctx.fillRect(u.x*state.TILEPX,u.y*state.TILEPX,state.TILEPX,state.TILEPX);
 
