@@ -135,7 +135,10 @@ function processPathQueue(){
       if(u.parkTileI!=null){ releaseReservation(u.id, state.parkTiles, state.parkReservedBy); u.parkTileI=null; }
     } else {
       u.path=path;
-      u.state=u.intent==="ToStorage" ? "ToStorage" : (u.intent==="ToPark" ? "ToPark" : "Move");
+      if(u.intent==="ToStorage") u.state="ToStorage";
+      else if(u.intent==="ToPark") u.state="ToPark";
+      else if(u.intent==="ToTransplantation") u.state="ToTransplantation";
+      else u.state="Move";
       u.stuckTicks=0;
     }
     done++;
