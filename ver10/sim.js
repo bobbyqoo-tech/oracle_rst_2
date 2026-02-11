@@ -134,7 +134,19 @@ function requestMoveToTransplantation(u){
     u.reclassStarted=true;
     return true;
   }
-  const stand=chooseBestStandTile(u, idx(b.x,b.y));
+  let stand=-1, bestD=1e9;
+  for(let dy=-1; dy<=1; dy++){
+    for(let dx=-1; dx<=1; dx++){
+      if(dx===0 && dy===0) continue;
+      const nx=b.x+dx, ny=b.y+dy;
+      if(!inBounds(nx,ny)) continue;
+      const ni=idx(nx,ny);
+      if(!isWalkableTile(ni)) continue;
+      if(state.animalAt[ni]!==-1) continue;
+      const d=Math.abs(nx-u.x)+Math.abs(ny-u.y);
+      if(d<bestD){ bestD=d; stand=ni; }
+    }
+  }
   if(stand===-1) return false;
   u.intent="ToTransplantation";
   requestPath(u.id, stand);
@@ -143,6 +155,7 @@ function requestMoveToTransplantation(u){
 }
 function tickReclass(u){
   if(!u.reclassToRole || u.dead || u.flee) return false;
+  if(u.nextReclassRetryTick!=null && state.tickCount<u.nextReclassRetryTick) return true;
 
   if(u.state==="ToTransplantation"){
     const moved=tryStepFromPath(u);
@@ -184,11 +197,8 @@ function tickReclass(u){
   u.progress=0;
   u.state="Idle";
   if(!requestMoveToTransplantation(u)){
-    log(`轉職失敗：單位${u.id} 找不到已完成的轉職公會。`);
-    u.reclassToRole=null;
-    u.reclassFromRole=null;
-    u.reclassBuildingId=-1;
-    u.reclassStarted=false;
+    u.nextReclassRetryTick = state.tickCount + Math.max(10, (state.TICK_HZ/2)|0);
+    u.state="Idle";
   }
   return true;
 }
