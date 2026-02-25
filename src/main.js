@@ -207,6 +207,18 @@ techBronzeBtn.onclick=()=>researchTech("bronze");
 techCastingBtn.onclick=()=>researchTech("casting");
 
 function clampInt(v,lo,hi,f){ const n=Number(v); if(!Number.isFinite(n)) return f; return Math.max(lo,Math.min(hi,Math.floor(n))); }
+function eventToTile(ev){
+  const rect=canvas.getBoundingClientRect();
+  if(rect.width<=0 || rect.height<=0) return { x:-1, y:-1 };
+  const sx = canvas.width / rect.width;
+  const sy = canvas.height / rect.height;
+  const px = (ev.clientX-rect.left) * sx;
+  const py = (ev.clientY-rect.top) * sy;
+  return {
+    x: (px/state.TILEPX)|0,
+    y: (py/state.TILEPX)|0,
+  };
+}
 
 const AGE_COSTS=[
   { wood:200, ore:150, food:80 },
@@ -365,9 +377,7 @@ btnStep.onclick=()=>{
 
 canvas.addEventListener("click",(ev)=>{
   if(!state.grid) return;
-  const rect=canvas.getBoundingClientRect();
-  const mx=((ev.clientX-rect.left)/state.TILEPX)|0;
-  const my=((ev.clientY-rect.top)/state.TILEPX)|0;
+  const { x:mx, y:my } = eventToTile(ev);
   if(mx<0||my<0||mx>=state.constants.W||my>=state.constants.H) return;
   const i=(my*state.constants.W)+mx;
   if(!state.explored[i]) { log(`(點擊) 未探索：(${mx},${my})`); return; }
@@ -380,9 +390,7 @@ canvas.addEventListener("click",(ev)=>{
 
 canvas.addEventListener("mousemove",(ev)=>{
   if(!state.grid) return;
-  const rect=canvas.getBoundingClientRect();
-  const mx=((ev.clientX-rect.left)/state.TILEPX)|0;
-  const my=((ev.clientY-rect.top)/state.TILEPX)|0;
+  const { x:mx, y:my } = eventToTile(ev);
   if(mx<0||my<0||mx>=state.constants.W||my>=state.constants.H){
     state.hoverX=null; state.hoverY=null;
   } else {
