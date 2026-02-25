@@ -2,6 +2,8 @@
 
 Current version: `v12`
 
+Languages: [English](README.md) | [繁體中文](README.zh-TW.md)
+
 This is a browser-run RTS simulation (no npm/build step required).
 
 - Entry page: `index.html`
@@ -86,4 +88,3 @@ Version archives are stored in folders like `ver8/`, `ver9/`, `ver10/`, `ver11/`
 
 - Early version summaries (v1-v7) are reconstructed from archived files and titles.
 - `PROJECT_CONTEXT_MERGED.md` is the main source of truth for current state and handoff details.
-
