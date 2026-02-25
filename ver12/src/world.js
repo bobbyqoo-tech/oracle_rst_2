@@ -441,35 +441,77 @@ function spawnClusteredPoints(count, occupiedSet, avoid){
     if(manhattan(x,y,avoid.x,avoid.y)<avoid.dist) continue;
     centers.push({x,y});
   }
+
   const used=new Set();
   const pts=[];
-  function place(x,y){
+  const dirsGrow = state.constants.DIRS8 || [
+    {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1},
+    {dx:1,dy:1},{dx:1,dy:-1},{dx:-1,dy:1},{dx:-1,dy:-1},
+  ];
+
+  function canPlace(x,y){
     if(!inBounds(x,y)) return false;
+    if(manhattan(x,y,avoid.x,avoid.y)<avoid.dist) return false;
     const k=`${x},${y}`;
     if(used.has(k) || occupiedSet.has(k)) return false;
     const i=idx(x,y);
     if(state.grid[i]===state.constants.Tile.Block) return false;
-    used.add(k); pts.push({x,y});
     return true;
   }
-  let placed=0, guard2=0;
-  while(placed<count && guard2<800000){
-    guard2++;
-    const c=centers[(Math.random()*centers.length)|0];
-    const r=(Math.random()<0.75)?6:12;
-    const ang=Math.random()*Math.PI*2;
-    const rad=Math.abs((Math.random()+Math.random()+Math.random())/3)*r;
-    let x=Math.round(c.x+Math.cos(ang)*rad);
-    let y=Math.round(c.y+Math.sin(ang)*rad);
-    x += ((Math.random()-0.5)*2)|0;
-    y += ((Math.random()-0.5)*2)|0;
-    if(place(x,y)) placed++;
+  function place(x,y){
+    if(!canPlace(x,y)) return false;
+    const k=`${x},${y}`;
+    used.add(k);
+    pts.push({x,y});
+    return true;
   }
+
+  const clusterLists = centers.map(()=>[]);
+  for(let ci=0; ci<centers.length && pts.length<count; ci++){
+    const c=centers[ci];
+    if(place(c.x,c.y)) clusterLists[ci].push({x:c.x,y:c.y});
+  }
+
+  let guard2=0;
+  while(pts.length<count && guard2<1000000){
+    guard2++;
+    const ci=(Math.random()*Math.max(1,clusterLists.length))|0;
+    const list=clusterLists[ci];
+    if(!list || !list.length) continue;
+
+    const base=list[(Math.random()*list.length)|0];
+    let placedThis=false;
+
+    // Prefer growing directly adjacent so resources form connected blobs.
+    for(let k=0;k<dirsGrow.length;k++){
+      const d=dirsGrow[(k + ((Math.random()*dirsGrow.length)|0)) % dirsGrow.length];
+      const nx=base.x+d.dx, ny=base.y+d.dy;
+      if(!canPlace(nx,ny)) continue;
+      place(nx,ny);
+      list.push({x:nx,y:ny});
+      placedThis=true;
+      break;
+    }
+    if(placedThis) continue;
+
+    // If frontier is saturated, allow a short hop from the same cluster to keep shape clumpy.
+    for(let hopTry=0; hopTry<6 && !placedThis; hopTry++){
+      const p=list[(Math.random()*list.length)|0];
+      const d=dirsGrow[(Math.random()*dirsGrow.length)|0];
+      const step=1+((Math.random()*3)|0);
+      const nx=p.x+d.dx*step, ny=p.y+d.dy*step;
+      if(!canPlace(nx,ny)) continue;
+      place(nx,ny);
+      list.push({x:nx,y:ny});
+      placedThis=true;
+    }
+  }
+
   let guard3=0;
-  while(placed<count && guard3<300000){
+  while(pts.length<count && guard3<300000){
     guard3++;
     const x=(Math.random()*W)|0, y=(Math.random()*H)|0;
-    if(place(x,y)) placed++;
+    place(x,y);
   }
   return pts;
 }

@@ -415,7 +415,7 @@ function raf(t){
 
 resizeCanvases();
 state.ctx.fillStyle="#111"; state.ctx.fillRect(0,0,state.canvas.width,state.canvas.height);
-log(`v12：渲染抽象層已啟用（mode=${RENDER_MODE}）。`);
+log(`v12.1：採集壅塞修正已啟用（mode=${RENDER_MODE}）。`);
 setStatus("READY");
 updateInfo();
 refreshTechUI();

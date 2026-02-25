@@ -1,6 +1,6 @@
 # Mini RTS (Browser Simulation)
 
-Current version: `v12`
+Current version: `v12.1`
 
 Languages: [English](README.md) | [繁體中文](README.zh-TW.md)
 
@@ -15,7 +15,7 @@ This is a browser-run RTS simulation (no npm/build step required).
 - Open `index.html` with Live Server or GitHub Pages.
 - ES Modules are used (`<script type="module">`).
 
-## Version Changelog (v1-v12)
+## Version Changelog (v1-v12.1)
 
 ### v1 - Lumber MVP
 - Single worker lumber prototype
@@ -79,6 +79,12 @@ This is a browser-run RTS simulation (no npm/build step required).
 - `render_sprite.js` placeholder shape renderer (no external assets)
 - Single renderer switch in `src/main.js`
 - Game logic/data structures unchanged
+
+### v12.1 - Gatherer Congestion Hotfix
+- Tree/rock generation now grows as more connected cluster blobs
+- Lumber/miner workers retarget when blocked too long on crowded resources
+- Gatherers avoid targets that temporarily have no available stand tile
+- Hotfix applied directly on top of v12 (same `ver12/` archive line)
 
 ## Archives
 

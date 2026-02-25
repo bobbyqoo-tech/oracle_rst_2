@@ -2,7 +2,7 @@
 
 Last Updated: 2026-02-25  
 Current Main Branch: `main`  
-Current Version Label: `v12`
+Current Version Label: `v12.1`
 
 ## 1) Project Overview
 
@@ -18,7 +18,7 @@ Live run mode:
 - Open `index.html` directly via Live Server or GitHub Pages.
 - ES Modules are used (`<script type="module">`).
 
-## 2) Implemented Features (As Of v12)
+## 2) Implemented Features (As Of v12.1)
 
 ### Core simulation
 
@@ -70,6 +70,12 @@ Live run mode:
 - Renderer selection controlled by a single flag in `src/main.js` (`RENDER_MODE`).
 - Game logic and data structures remain unchanged; grid coordinates remain authoritative.
 
+### New in v12.1 (Gatherer Congestion Hotfix)
+
+- Resource cluster generation (`tree` / `rock`) now grows as more connected blob-like groups instead of overly sparse scatter inside clusters.
+- Lumber/miner workers now retarget to other resources if blocked too long or if no valid stand tile is available for the current target.
+- Goal: reduce "workers stuck in one lump" behavior and unblock completed gatherers from leaving crowded resource fronts.
+
 ## 3) Recent Fixes (Critical)
 
 ### Fix A: Reclass path state overwritten
@@ -104,14 +110,14 @@ Commit:
 
 - `05710a5` (`Retry reclass pathing when guild tiles are congested`)
 
-## 4) v12 File-Level Notes
+## 4) v12.1 File-Level Notes
 
 ### `index.html`
 
-- Title and header updated to v12 text.
+- Title and header updated to v12.1 text.
 - Build dropdown labels now include cost hints.
 - Added `#buildCost` and `#hoverCoordLabel`.
-- Script source: `src/main.js?v=12`.
+- Script source: `src/main.js?v=12.1`.
 
 ### `src/main.js`
 
@@ -119,7 +125,7 @@ Commit:
 - Added live hover coordinate label update helper.
 - Added `refreshBuildUI` and bound it to build type change + periodic info refresh.
 - Added `RENDER_MODE` single switch and renderer initialization.
-- Updated startup log text to v12.
+- Updated startup log text to v12.1.
 
 ### `src/sim.js`
 
@@ -141,6 +147,12 @@ Commit:
 ### `src/world.js`
 
 - Generation center moved to right-bottom offset (`~65%` map position with padding safeguards).
+- `spawnClusteredPoints()` now grows connected cluster blobs for tree/rock placement.
+
+### `src/sim.js` (v12.1 hotfix)
+
+- Gatherers retarget blocked `tree`/`rock` targets after prolonged congestion.
+- Gatherers also avoid/retry another target when a resource has no available stand tile.
 
 ### `src/state.js`
 
@@ -152,9 +164,9 @@ Commit:
   - `ver11/src/*`
   - `ver11/index.html`
   - `ver11/index_single.html`
-- `ver12/` should mirror current v12 runtime files when archiving/release snapshot is requested.
+- `ver12/` currently also carries v12.1 hotfix snapshot updates (same folder, direct in-place patching).
 
-## 6) Quick Verification Checklist (v12)
+## 6) Quick Verification Checklist (v12.1)
 
 1. Generate map.
 2. Move mouse over canvas and verify live coordinate updates in side panel (no click needed).
@@ -167,6 +179,7 @@ Commit:
 9. Confirm initial town/units appear right-bottom relative to map center.
 10. Set `RENDER_MODE="pixel"` and confirm visuals match prior behavior.
 11. Set `RENDER_MODE="sprite"` and confirm placeholder shape renderer displays units/resources/fog correctly.
+12. Stress test with high lumber/miner counts and confirm blocked gatherers retarget instead of staying stuck on one resource.
 
 ## 7) Operational Notes For New Chat Continuation
 

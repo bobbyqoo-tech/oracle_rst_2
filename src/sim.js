@@ -275,12 +275,26 @@ function updateInfo(){
 function requestMoveToResource(u,target){
   if(target.type==="tree"){
     const res=state.trees[target.id]; if(!res||!res.alive) return false;
-    const stand=chooseBestStandTile(u, idx(res.x,res.y)); if(stand===-1) return false;
+    const stand=chooseBestStandTile(u, idx(res.x,res.y));
+    if(stand===-1){
+      if(u.carry===0){
+        u.avoidTarget={type:"tree", id:target.id};
+        u.avoidUntilTick=state.tickCount + Math.max(20, (state.TICK_HZ*2)|0);
+      }
+      return false;
+    }
     u.target=target; u.intent=null; requestPath(u.id, stand); return true;
   }
   if(target.type==="rock"){
     const res=state.rocks[target.id]; if(!res||!res.alive) return false;
-    const stand=chooseBestStandTile(u, idx(res.x,res.y)); if(stand===-1) return false;
+    const stand=chooseBestStandTile(u, idx(res.x,res.y));
+    if(stand===-1){
+      if(u.carry===0){
+        u.avoidTarget={type:"rock", id:target.id};
+        u.avoidUntilTick=state.tickCount + Math.max(20, (state.TICK_HZ*2)|0);
+      }
+      return false;
+    }
     u.target=target; u.intent=null; requestPath(u.id, stand); return true;
   }
   if(target.type==="meat"){
@@ -301,6 +315,19 @@ function requestMoveToResource(u,target){
     u.target=target; u.intent=null; requestPath(u.id, best); return true;
   }
   return false;
+}
+
+function retargetBlockedGatherer(u){
+  if(!u || u.dead || u.carry>0) return false;
+  if(!u.target || (u.target.type!=="tree" && u.target.type!=="rock")) return false;
+  u.avoidTarget = {type:u.target.type, id:u.target.id};
+  u.avoidUntilTick = state.tickCount + state.constants.RES_AVOID_TICKS;
+  u.stuckTicks=0;
+  u.path=[];
+  u.intent=null;
+  u.state="Idle";
+  u.target=null;
+  return true;
 }
 
 function requestMoveToStorageLogic(u){
@@ -698,14 +725,7 @@ function tickWorker(u){
     if(!moved){
       if(u.stuckTicks>state.constants.PUSH_STUCK_TICKS && tryYieldOrPush(u, u.path[0])) return;
       if(u.stuckTicks>state.constants.RES_STUCK_TICKS && u.target && (u.target.type==="tree" || u.target.type==="rock") && u.carry===0){
-        u.avoidTarget = {type:u.target.type, id:u.target.id};
-        u.avoidUntilTick = state.tickCount + state.constants.RES_AVOID_TICKS;
-        u.stuckTicks=0;
-        u.path=[];
-        u.intent=null;
-        u.state="Idle";
-        u.target=null;
-        return;
+        if(retargetBlockedGatherer(u)) return;
       }
       if(u.stuckTicks>16){
         u.stuckTicks=0;
@@ -803,7 +823,10 @@ function tickWorker(u){
       const res=state.trees[u.target.id];
       if(!res||!res.alive){ if(u.carry>0) requestMoveToStorageLogic(u); else {u.state="Idle";u.target=null;} return; }
       if(Math.abs(u.x-res.x)>1 || Math.abs(u.y-res.y)>1 || (u.x===res.x && u.y===res.y)){
-        requestMoveToResource(u, u.target); return;
+        if(!requestMoveToResource(u, u.target)){
+          retargetBlockedGatherer(u);
+        }
+        return;
       }
       u.progress += state.STEP_TIME;
       while(u.progress>=1.0 && u.carry<state.constants.WORKER_CARRY_CAP && res.amt>0){
@@ -828,7 +851,10 @@ function tickWorker(u){
       const res=state.rocks[u.target.id];
       if(!res||!res.alive){ if(u.carry>0) requestMoveToStorageLogic(u); else {u.state="Idle";u.target=null;} return; }
       if(Math.abs(u.x-res.x)>1 || Math.abs(u.y-res.y)>1 || (u.x===res.x && u.y===res.y)){
-        requestMoveToResource(u, u.target); return;
+        if(!requestMoveToResource(u, u.target)){
+          retargetBlockedGatherer(u);
+        }
+        return;
       }
       u.progress += state.STEP_TIME;
       while(u.progress>=1.0 && u.carry<state.constants.WORKER_CARRY_CAP && res.amt>0){
