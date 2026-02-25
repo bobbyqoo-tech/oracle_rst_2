@@ -1,13 +1,14 @@
 ﻿import { state } from "./state.js";
-import { generate, resizeCanvases, updateVisibilityAndFogLayers, addBuilding } from "./world.js";
+import { generate, resizeCanvases, updateVisibilityAndFogLayers, addBuilding, drawBaseAll, redrawDiscoveredResources } from "./world.js";
 import { initAstarArrays } from "./pathfinding.js";
 import { log, updateInfo, tick, render, setStatus } from "./sim.js";
-import { setRendererMode } from "./render/renderer.js";
+import { setRendererMode, primeRendererAssets } from "./render/renderer.js";
 
 const canvas=document.getElementById("c");
 const ctx=canvas.getContext("2d");
 ctx.imageSmoothingEnabled=false;
-const RENDER_MODE = "pixel"; // Single switch: "pixel" | "sprite"
+const RENDER_MODE = "sprite"; // Single switch: "pixel" | "sprite"
+const FIXED_TILE_SIZE = 24;
 setRendererMode(RENDER_MODE);
 
 state.canvas=canvas;
@@ -71,6 +72,17 @@ const inpReclassWho=document.getElementById("reclassWho");
 const selReclassTo=document.getElementById("reclassTo");
 const btnReclass=document.getElementById("reclassBtn");
 btnClear.onclick=()=> (state.dom.logEl.textContent="");
+if(inpTile){
+  inpTile.value = String(FIXED_TILE_SIZE);
+  inpTile.disabled = true;
+}
+
+primeRendererAssets(state, ()=>{
+  if(!state.grid) return;
+  drawBaseAll();
+  redrawDiscoveredResources();
+  render();
+});
 
 btnBuild.onclick=()=>{
   if(!state.grid){ log("請先按「生成地圖」。"); return; }
@@ -302,7 +314,7 @@ function readParams(){
     obsPercent: clampInt(inpObs.value,0,40,10),
     visionWorker: clampInt(inpVisW.value,2,24,7),
     visionScout: clampInt(inpVisS.value,4,36,13),
-    tilePx: clampInt(inpTile.value,4,12,7),
+    tilePx: FIXED_TILE_SIZE,
     astarBudget: clampInt(inpAstarBudget.value,1,80,12),
     sampleK: clampInt(inpSampleK.value,5,200,45),
     tickHz: clampInt(inpHz.value,5,60,20),
@@ -415,7 +427,7 @@ function raf(t){
 
 resizeCanvases();
 state.ctx.fillStyle="#111"; state.ctx.fillRect(0,0,state.canvas.width,state.canvas.height);
-log(`v12.1：採集壅塞修正已啟用（mode=${RENDER_MODE}）。`);
+log(`v13：24px sprite render pipeline 已啟用（mode=${RENDER_MODE}）。`);
 setStatus("READY");
 updateInfo();
 refreshTechUI();

@@ -1,5 +1,12 @@
 ﻿import { state } from "./state.js";
 
+import {
+  renderBaseAllLayer,
+  renderStorageAndRingsLayer,
+  renderResourceBaseTile,
+  eraseBaseTileLayer,
+} from "./render/renderer.js";
+
 const W = state.constants.W;
 const H = state.constants.H;
 const N = W * H;
@@ -48,69 +55,21 @@ function resizeCanvases(){
 function clearCanvas(c){ c.clearRect(0,0,c.canvas.width,c.canvas.height); }
 
 function drawStorageAndRings(){
-  for(const b of state.buildings){
-    if(!b.built){
-      state.baseCtx.fillStyle="rgb(90,90,90)";
-      state.baseCtx.fillRect(b.x*state.TILEPX, b.y*state.TILEPX, state.TILEPX, state.TILEPX);
-      state.baseCtx.strokeStyle="rgba(255,255,255,0.25)";
-      state.baseCtx.strokeRect(b.x*state.TILEPX+0.5, b.y*state.TILEPX+0.5, state.TILEPX-1, state.TILEPX-1);
-      continue;
-    }
-    if(b.type==="town_center") state.baseCtx.fillStyle="rgb(220,200,60)";
-    else if(b.type==="lumberyard") state.baseCtx.fillStyle="rgb(120,200,120)";
-    else if(b.type==="mining_site") state.baseCtx.fillStyle="rgb(140,120,220)";
-    else if(b.type==="granary") state.baseCtx.fillStyle="rgb(220,160,90)";
-    else if(b.type==="transplantation") state.baseCtx.fillStyle="rgb(80,180,210)";
-    else state.baseCtx.fillStyle="rgb(200,200,200)";
-    state.baseCtx.fillRect(b.x*state.TILEPX, b.y*state.TILEPX, state.TILEPX, state.TILEPX);
-  }
-
-  state.baseCtx.fillStyle="rgba(220,200,60,0.22)";
-  for(const ti of state.dropTiles){
-    state.baseCtx.fillRect(xOf(ti)*state.TILEPX, yOf(ti)*state.TILEPX, state.TILEPX, state.TILEPX);
-  }
-  state.baseCtx.fillStyle="rgba(120,190,255,0.10)";
-  for(const ti of state.parkTiles){
-    state.baseCtx.fillRect(xOf(ti)*state.TILEPX, yOf(ti)*state.TILEPX, state.TILEPX, state.TILEPX);
-  }
+  renderStorageAndRingsLayer(state);
 }
-function drawTreeTile(x,y){ state.baseCtx.fillStyle="rgb(0,120,0)"; state.baseCtx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX); }
-function drawRockTile(x,y){ state.baseCtx.fillStyle="rgb(90,40,140)"; state.baseCtx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX); }
-function drawMeatTile(x,y){ state.baseCtx.fillStyle="rgb(170,90,60)"; state.baseCtx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX); }
+function drawTreeTile(x,y){ renderResourceBaseTile(state, "tree", x, y); }
+function drawRockTile(x,y){ renderResourceBaseTile(state, "rock", x, y); }
+function drawMeatTile(x,y){ renderResourceBaseTile(state, "meat", x, y); }
 
 function drawBaseAll(){
-  clearCanvas(state.baseCtx);
-  state.baseCtx.fillStyle="#111";
-  state.baseCtx.fillRect(0,0,state.baseLayer.width,state.baseLayer.height);
-
-  state.baseCtx.fillStyle="rgb(70,70,70)";
-  for(let i=0;i<N;i++){
-    if(state.grid[i]===state.constants.Tile.Block){
-      state.baseCtx.fillRect(xOf(i)*state.TILEPX, yOf(i)*state.TILEPX, state.TILEPX, state.TILEPX);
-    }
-  }
-  drawStorageAndRings();
+  renderBaseAllLayer(state);
 }
 
 function eraseTileToBackground(i){
-  const x=xOf(i), y=yOf(i);
-  state.baseCtx.fillStyle="#111";
-  state.baseCtx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
-  if(state.grid[i]===state.constants.Tile.Block){
-    state.baseCtx.fillStyle="rgb(70,70,70)";
-    state.baseCtx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
-  } else if(state.grid[i]===state.constants.Tile.Storage){
-    drawStorageAndRings();
-  } else {
-    const r=distToNearestBuilding(x,y);
-    if(r===state.constants.STORAGE_RING_R){
-      state.baseCtx.fillStyle="rgba(220,200,60,0.22)";
-      state.baseCtx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
-    } else if(r===state.constants.PARK_RING_R){
-      state.baseCtx.fillStyle="rgba(120,190,255,0.10)";
-      state.baseCtx.fillRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
-    }
-  }
+  eraseBaseTileLayer(state, i, {
+    getDistToNearestBuilding: distToNearestBuilding,
+    redrawDiscoveredResources,
+  });
 }
 
 function drawFogTile(i){

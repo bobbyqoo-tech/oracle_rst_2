@@ -2,7 +2,7 @@
 
 Last Updated: 2026-02-25  
 Current Main Branch: `main`  
-Current Version Label: `v12.1`
+Current Version Label: `v13`
 
 ## 1) Project Overview
 
@@ -18,7 +18,7 @@ Live run mode:
 - Open `index.html` directly via Live Server or GitHub Pages.
 - ES Modules are used (`<script type="module">`).
 
-## 2) Implemented Features (As Of v12.1)
+## 2) Implemented Features (As Of v13)
 
 ### Core simulation
 
@@ -76,6 +76,20 @@ Live run mode:
 - Lumber/miner workers now retarget to other resources if blocked too long or if no valid stand tile is available for the current target.
 - Goal: reduce "workers stuck in one lump" behavior and unblock completed gatherers from leaving crowded resource fronts.
 
+### New in v13 (Render Stage 2 - Real Sprite Pipeline, 24px)
+
+- Fixed render tile size to `24px` (visual scale only; world coordinates remain grid-based).
+- Added real sprite asset folder under `assets/sprites/*` and cached image loader (`src/render/assets.js`).
+- Sprite renderer now uses `drawImage` with cached assets for:
+  - terrain tiles
+  - obstacle tiles
+  - resource visuals (`tree`, `rock`, `meat`)
+  - storage/building visuals (`town_center` and buildable storage types)
+- Sprite anchor uses foot-on-ground alignment from tile center (drawn upward from logical tile center).
+- Unit rendering remains placeholder shapes (no unit sprites yet).
+- Missing/unloaded assets fall back to placeholder rendering without changing game logic.
+- Static base/resource tile drawing now routes through render abstraction layer dispatch.
+
 ## 3) Recent Fixes (Critical)
 
 ### Fix A: Reclass path state overwritten
@@ -110,14 +124,15 @@ Commit:
 
 - `05710a5` (`Retry reclass pathing when guild tiles are congested`)
 
-## 4) v12.1 File-Level Notes
+## 4) v13 File-Level Notes
 
 ### `index.html`
 
-- Title and header updated to v12.1 text.
+- Title and header updated to v13 text.
 - Build dropdown labels now include cost hints.
 - Added `#buildCost` and `#hoverCoordLabel`.
-- Script source: `src/main.js?v=12.1`.
+- Tile size UI is fixed to 24px.
+- Script source: `src/main.js?v=13`.
 
 ### `src/main.js`
 
@@ -125,7 +140,9 @@ Commit:
 - Added live hover coordinate label update helper.
 - Added `refreshBuildUI` and bound it to build type change + periodic info refresh.
 - Added `RENDER_MODE` single switch and renderer initialization.
-- Updated startup log text to v12.1.
+- Fixed `tilePx` generation parameter to 24 and disabled tile-size input editing.
+- Triggers renderer asset preload and redraw after sprite assets finish loading.
+- Updated startup log text to v13.
 
 ### `src/sim.js`
 
@@ -135,6 +152,7 @@ Commit:
 ### `src/render/renderer.js`
 
 - Renderer dispatcher and mode setter (`pixel` / `sprite`).
+- Expanded renderer abstraction to include base-layer/resource tile draw dispatch and asset priming hook.
 
 ### `src/render/render_pixel.js`
 
@@ -142,7 +160,12 @@ Commit:
 
 ### `src/render/render_sprite.js`
 
-- Placeholder shape-based renderer (no external sprite assets).
+- Sprite renderer using cached `drawImage` assets with placeholder fallbacks.
+- Includes 24px foot-anchor sprite placement for resources/buildings.
+
+### `src/render/assets.js`
+
+- Cached image loader/manifest helper for sprite rendering (no per-frame `Image()` creation).
 
 ### `src/world.js`
 
@@ -166,7 +189,7 @@ Commit:
   - `ver11/index_single.html`
 - `ver12/` currently also carries v12.1 hotfix snapshot updates (same folder, direct in-place patching).
 
-## 6) Quick Verification Checklist (v12.1)
+## 6) Quick Verification Checklist (v13)
 
 1. Generate map.
 2. Move mouse over canvas and verify live coordinate updates in side panel (no click needed).
@@ -180,6 +203,8 @@ Commit:
 10. Set `RENDER_MODE="pixel"` and confirm visuals match prior behavior.
 11. Set `RENDER_MODE="sprite"` and confirm placeholder shape renderer displays units/resources/fog correctly.
 12. Stress test with high lumber/miner counts and confirm blocked gatherers retarget instead of staying stuck on one resource.
+13. Confirm tile size is fixed at 24px and coordinate logic remains unchanged.
+14. Set `RENDER_MODE="sprite"` and verify terrain/obstacles/resources/buildings render via image sprites; temporarily rename an asset to confirm fallback visuals still render.
 
 ## 7) Operational Notes For New Chat Continuation
 

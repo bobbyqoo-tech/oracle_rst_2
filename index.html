@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Mini RTS - v12.1 (Gatherer Congestion Hotfix)</title>
+  <title>Mini RTS - v13 (24px Sprite Render Pipeline)</title>
   <style>
     body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Arial,"Noto Sans TC",sans-serif;}
     .wrap{display:grid;grid-template-columns:auto 320px 520px;height:100vh;}
@@ -40,7 +40,7 @@
     <div class="stats" id="statPanel"></div>
   </div>
   <div class="panel">
-    <h2>Mini RTS v12.1：採集壅塞修正（樹/礦群生成 + 換目標）</h2>
+    <h2>Mini RTS v13：24px Sprite Render Pipeline</h2>
     <div class="hint">
       玩法：調參數 → 生成地圖 → 開始。點選資源可設定偏好目標。<br/>
       <b>獵人</b>：追擊野生動物，擊殺後採集肉並回倉庫交付。<br/>
@@ -76,7 +76,7 @@
     <div class="row" style="margin:0 0 8px;">
       <label>工人視野 <input id="inpVisW" type="number" min="2" max="24" value="7"/></label>
       <label>斥侯視野 <input id="inpVisS" type="number" min="4" max="36" value="13"/></label>
-      <label>格像素 <input id="inpTile" type="number" min="4" max="12" value="7"/></label>
+      <label>格像素 <input id="inpTile" type="number" min="24" max="24" value="24"/></label>
     </div>
 
     <div class="row" style="margin:0 0 8px;">
@@ -153,6 +153,6 @@
   </div>
 </div>
 
-<script type="module" src="src/main.js?v=12.1"></script>
+<script type="module" src="src/main.js?v=13"></script>
 </body>
 </html>
