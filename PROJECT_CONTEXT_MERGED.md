@@ -1,8 +1,8 @@
 # PROJECT CONTEXT (MERGED) - Mini RTS
 
-Last Updated: 2026-02-12  
+Last Updated: 2026-02-25  
 Current Main Branch: `main`  
-Current Version Label: `v11`
+Current Version Label: `v12`
 
 ## 1) Project Overview
 
@@ -11,14 +11,14 @@ This is a browser-run RTS simulation (no npm/build step required).
 - Entry page: `index.html`
 - Main runtime modules: `src/main.js`, `src/sim.js`, `src/world.js`, `src/pathfinding.js`, `src/state.js`, `src/constants.js`
 - Legacy backup page: `index_single.html`
-- Version archive folders exist (`ver8`, `ver9`, `ver10`, `ver11`, etc.)
+- Version archive folders exist (`ver8`, `ver9`, `ver10`, `ver11`, `ver12`, etc.)
 
 Live run mode:
 
 - Open `index.html` directly via Live Server or GitHub Pages.
 - ES Modules are used (`<script type="module">`).
 
-## 2) Implemented Features (As Of v11)
+## 2) Implemented Features (As Of v12)
 
 ### Core simulation
 
@@ -62,6 +62,14 @@ Live run mode:
 - Spawn offset:
   - Initial `town_center` and starting unit cluster shifted to right-bottom area for future multi-faction expansion.
 
+### New in v12 (Render Stage 1)
+
+- Rendering abstraction layer introduced under `src/render/`.
+- Existing pixel-style rendering extracted to `src/render/render_pixel.js`.
+- Added alternate placeholder sprite-style renderer in `src/render/render_sprite.js` (no external assets).
+- Renderer selection controlled by a single flag in `src/main.js` (`RENDER_MODE`).
+- Game logic and data structures remain unchanged; grid coordinates remain authoritative.
+
 ## 3) Recent Fixes (Critical)
 
 ### Fix A: Reclass path state overwritten
@@ -96,25 +104,39 @@ Commit:
 
 - `05710a5` (`Retry reclass pathing when guild tiles are congested`)
 
-## 4) v11 File-Level Notes
+## 4) v12 File-Level Notes
 
 ### `index.html`
 
-- Title and header updated to v11 text.
+- Title and header updated to v12 text.
 - Build dropdown labels now include cost hints.
 - Added `#buildCost` and `#hoverCoordLabel`.
-- Script source: `src/main.js?v=11`.
+- Script source: `src/main.js?v=12`.
 
 ### `src/main.js`
 
 - Added build cost table and build resource gating.
 - Added live hover coordinate label update helper.
 - Added `refreshBuildUI` and bound it to build type change + periodic info refresh.
-- Updated startup log text to v11.
+- Added `RENDER_MODE` single switch and renderer initialization.
+- Updated startup log text to v12.
 
 ### `src/sim.js`
 
 - `updateInfo()` now calls `state.refreshBuildUI` so build affordability state stays synced with storage changes.
+- `render()` now delegates to render abstraction (`src/render/renderer.js`).
+
+### `src/render/renderer.js`
+
+- Renderer dispatcher and mode setter (`pixel` / `sprite`).
+
+### `src/render/render_pixel.js`
+
+- Extracted original pixel renderer from `src/sim.js`.
+
+### `src/render/render_sprite.js`
+
+- Placeholder shape-based renderer (no external sprite assets).
 
 ### `src/world.js`
 
@@ -130,8 +152,9 @@ Commit:
   - `ver11/src/*`
   - `ver11/index.html`
   - `ver11/index_single.html`
+- `ver12/` should mirror current v12 runtime files when archiving/release snapshot is requested.
 
-## 6) Quick Verification Checklist (v11)
+## 6) Quick Verification Checklist (v12)
 
 1. Generate map.
 2. Move mouse over canvas and verify live coordinate updates in side panel (no click needed).
@@ -142,6 +165,8 @@ Commit:
 7. Issue reclass command (e.g., `H#15` -> `miner`).
 8. Confirm unit moves to guild, finishes reclass, and role behavior changes.
 9. Confirm initial town/units appear right-bottom relative to map center.
+10. Set `RENDER_MODE="pixel"` and confirm visuals match prior behavior.
+11. Set `RENDER_MODE="sprite"` and confirm placeholder shape renderer displays units/resources/fog correctly.
 
 ## 7) Operational Notes For New Chat Continuation
 
@@ -149,7 +174,7 @@ Commit:
 - Default target file set for new features:
   - `src/*`
   - `index.html`
-  - mirror to `ver11/*` when archive sync is required.
+  - mirror to `ver12/*` when archive sync is required.
 - Prefer non-destructive git operations.
 - After each feature completion, update this file section-by-section.
 
@@ -159,4 +184,3 @@ Commit:
 - If command appears stuck, re-run as a single simple command segment.
 - Prefer already-approved command patterns.
 - For shell content reads, `Get-Content` should be used directly.
-
