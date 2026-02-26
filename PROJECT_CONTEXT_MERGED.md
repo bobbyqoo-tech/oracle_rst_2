@@ -2,7 +2,7 @@
 
 Last Updated: 2026-02-25  
 Current Main Branch: `main`  
-Current Version Label: `v13.2`
+Current Version Label: `v13.3`
 
 ## 1) Project Overview
 
@@ -98,6 +98,13 @@ Live run mode:
 - `builder` units currently keep placeholder fallback rendering.
 - Missing unit sprite assets fall back to existing placeholder unit rendering.
 
+### New in v13.3 (Render Stage 4 - Animal/Builder Sprites + Map Zoom)
+
+- Added sprite rendering for wildlife animals (static 4-way directional sprites by state: wander/chase/return).
+- Added sprite rendering for `builder` units (static 4-way directional).
+- Added map zoom control (UI slider + reset) that scales only the canvas display, not the side panels/UI.
+- Hover/click coordinate mapping remains correct under canvas zoom scaling.
+
 ## 3) Recent Fixes (Critical)
 
 ### Fix A: Reclass path state overwritten
@@ -179,6 +186,11 @@ Commit:
 ### `assets/sprites/units/*`
 
 - Added 4-way static unit sprite set for `lumber`, `miner`, `hunter`, `scout` (`*_n/e/s/w.svg`).
+- Added 4-way static unit sprite set for `builder`.
+
+### `assets/sprites/animals/*`
+
+- Added 4-way static wildlife sprites for `wander`, `chase`, `return` visual states.
 
 ### `src/world.js`
 

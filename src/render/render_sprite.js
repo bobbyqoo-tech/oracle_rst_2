@@ -32,6 +32,22 @@ const SPRITE_MANIFEST = {
   "unit.scout.e": "assets/sprites/units/scout_e.svg",
   "unit.scout.s": "assets/sprites/units/scout_s.svg",
   "unit.scout.w": "assets/sprites/units/scout_w.svg",
+  "unit.builder.n": "assets/sprites/units/builder_n.svg",
+  "unit.builder.e": "assets/sprites/units/builder_e.svg",
+  "unit.builder.s": "assets/sprites/units/builder_s.svg",
+  "unit.builder.w": "assets/sprites/units/builder_w.svg",
+  "animal.wander.n": "assets/sprites/animals/wander_n.svg",
+  "animal.wander.e": "assets/sprites/animals/wander_e.svg",
+  "animal.wander.s": "assets/sprites/animals/wander_s.svg",
+  "animal.wander.w": "assets/sprites/animals/wander_w.svg",
+  "animal.chase.n": "assets/sprites/animals/chase_n.svg",
+  "animal.chase.e": "assets/sprites/animals/chase_e.svg",
+  "animal.chase.s": "assets/sprites/animals/chase_s.svg",
+  "animal.chase.w": "assets/sprites/animals/chase_w.svg",
+  "animal.return.n": "assets/sprites/animals/return_n.svg",
+  "animal.return.e": "assets/sprites/animals/return_e.svg",
+  "animal.return.s": "assets/sprites/animals/return_s.svg",
+  "animal.return.w": "assets/sprites/animals/return_w.svg",
 };
 
 let spriteAssetsInit = false;
@@ -166,10 +182,15 @@ function facing4FromVector(dx, dy){
   return dy>=0 ? "s" : "n";
 }
 
+function inferFacing4(state, x, y, target){
+  if(!target) return "s";
+  return facing4FromVector(target.x-x, target.y-y);
+}
+
 function unitSpriteKey(state, u){
-  if(u.role!=="lumber" && u.role!=="miner" && u.role!=="hunter" && u.role!=="scout") return null;
+  if(u.role!=="lumber" && u.role!=="miner" && u.role!=="hunter" && u.role!=="scout" && u.role!=="builder") return null;
   const t = getUnitTargetPos(state, u);
-  const dir = t ? facing4FromVector(t.x-u.x, t.y-u.y) : "s";
+  const dir = inferFacing4(state, u.x, u.y, t);
   return `unit.${u.role}.${dir}`;
 }
 
@@ -185,6 +206,47 @@ function drawUnitPlaceholder(ctx, state, u){
   ctx.fillRect(p.px+1, p.py+state.TILEPX-2, Math.max(2,state.TILEPX-2), 1);
   drawDisc(ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.30), roleColor(u.role), "rgba(15,15,15,0.85)");
   ctx.fillStyle="rgba(255,255,255,0.30)";
+  ctx.fillRect(p.px+2, p.py+2, Math.max(1,(state.TILEPX/4)|0), 1);
+}
+
+function animalTargetPos(state, a){
+  if(a.targetUnitId!=null && a.targetUnitId>=0){
+    const u = state.units && state.units[a.targetUnitId];
+    if(u && !u.dead) return { x:u.x, y:u.y };
+  }
+  if(a.state==="Return"){
+    return { x:a.homeX, y:a.homeY };
+  }
+  if(a.wanderTX!=null && a.wanderTY!=null){
+    return { x:a.wanderTX, y:a.wanderTY };
+  }
+  return { x:a.homeX, y:a.homeY };
+}
+
+function animalSpriteStateKey(a){
+  if(a.state==="Chase") return "chase";
+  if(a.state==="Return") return "return";
+  return "wander";
+}
+
+function animalSpriteKey(state, a){
+  const t = animalTargetPos(state, a);
+  const dir = inferFacing4(state, a.x, a.y, t);
+  return `animal.${animalSpriteStateKey(a)}.${dir}`;
+}
+
+function drawAnimalSprite(ctx, state, a){
+  const key = animalSpriteKey(state, a);
+  return drawAnchoredSprite(ctx, state, key, a.x, a.y, 24, 28);
+}
+
+function drawAnimalPlaceholder(ctx, state, a){
+  const p=tileBox(state, a.x, a.y);
+  const fill = a.state==="Chase" ? "rgb(220,90,90)" : (a.state==="Return" ? "rgb(160,160,160)" : "rgb(200,170,110)");
+  ctx.fillStyle="rgba(0,0,0,0.22)";
+  ctx.fillRect(p.px+1, p.py+state.TILEPX-3, Math.max(2,state.TILEPX-2), 2);
+  drawDisc(ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.34), fill, "rgba(20,20,20,0.8)");
+  ctx.fillStyle="rgba(255,255,255,0.35)";
   ctx.fillRect(p.px+2, p.py+2, Math.max(1,(state.TILEPX/4)|0), 1);
 }
 
@@ -326,13 +388,9 @@ function renderSpriteFrame(state){
     if(a.state==="Dead") continue;
     const i=idxOf(state, a.x, a.y);
     if(!state.visible[i]) continue;
-    const p=tileBox(state, a.x, a.y);
-    const fill = a.state==="Chase" ? "rgb(220,90,90)" : (a.state==="Return" ? "rgb(160,160,160)" : "rgb(200,170,110)");
-    ctx.fillStyle="rgba(0,0,0,0.22)";
-    ctx.fillRect(p.px+1, p.py+state.TILEPX-3, Math.max(2,state.TILEPX-2), 2);
-    drawDisc(ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.34), fill, "rgba(20,20,20,0.8)");
-    ctx.fillStyle="rgba(255,255,255,0.35)";
-    ctx.fillRect(p.px+2, p.py+2, Math.max(1,(state.TILEPX/4)|0), 1);
+    if(!drawAnimalSprite(ctx, state, a)){
+      drawAnimalPlaceholder(ctx, state, a);
+    }
   }
 
   for(const u of state.units){

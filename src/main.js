@@ -5,6 +5,7 @@ import { log, updateInfo, tick, render, setStatus } from "./sim.js";
 import { setRendererMode, primeRendererAssets } from "./render/renderer.js";
 
 const canvas=document.getElementById("c");
+const gamePane=document.querySelector(".gamepane");
 const ctx=canvas.getContext("2d");
 ctx.imageSmoothingEnabled=false;
 const RENDER_MODE = "sprite"; // Single switch: "pixel" | "sprite"
@@ -71,6 +72,9 @@ const hoverCoordLabelEl=document.getElementById("hoverCoordLabel");
 const inpReclassWho=document.getElementById("reclassWho");
 const selReclassTo=document.getElementById("reclassTo");
 const btnReclass=document.getElementById("reclassBtn");
+const zoomRange=document.getElementById("zoomRange");
+const zoomLabel=document.getElementById("zoomLabel");
+const zoomResetBtn=document.getElementById("zoomReset");
 btnClear.onclick=()=> (state.dom.logEl.textContent="");
 if(inpTile){
   inpTile.value = String(FIXED_TILE_SIZE);
@@ -207,6 +211,19 @@ techBronzeBtn.onclick=()=>researchTech("bronze");
 techCastingBtn.onclick=()=>researchTech("casting");
 
 function clampInt(v,lo,hi,f){ const n=Number(v); if(!Number.isFinite(n)) return f; return Math.max(lo,Math.min(hi,Math.floor(n))); }
+let mapZoomPct = 100;
+function updateCanvasZoom(){
+  if(!canvas || !gamePane || !canvas.width || !canvas.height) return;
+  const paneW = Math.max(1, gamePane.clientWidth - 8);
+  const paneH = Math.max(1, gamePane.clientHeight - 8);
+  const fit = Math.min(paneW / canvas.width, paneH / canvas.height);
+  const zoomMul = Math.max(0.25, Math.min(4, mapZoomPct / 100));
+  const scale = Math.max(0.01, fit * zoomMul);
+  canvas.style.width = `${Math.max(1, Math.round(canvas.width * scale))}px`;
+  canvas.style.height = `${Math.max(1, Math.round(canvas.height * scale))}px`;
+  if(zoomLabel) zoomLabel.textContent = `${Math.round(mapZoomPct)}%`;
+  if(zoomRange) zoomRange.value = String(Math.round(mapZoomPct));
+}
 function eventToTile(ev){
   const rect=canvas.getBoundingClientRect();
   if(rect.width<=0 || rect.height<=0) return { x:-1, y:-1 };
@@ -218,6 +235,18 @@ function eventToTile(ev){
     x: (px/state.TILEPX)|0,
     y: (py/state.TILEPX)|0,
   };
+}
+if(zoomRange){
+  zoomRange.addEventListener("input", ()=>{
+    mapZoomPct = clampInt(zoomRange.value,25,400,100);
+    updateCanvasZoom();
+  });
+}
+if(zoomResetBtn){
+  zoomResetBtn.addEventListener("click", ()=>{
+    mapZoomPct = 100;
+    updateCanvasZoom();
+  });
 }
 
 const AGE_COSTS=[
@@ -342,6 +371,7 @@ btnGen.onclick=()=>{
   inpAstarBudget.value=p.astarBudget; inpSampleK.value=p.sampleK; inpHz.value=p.tickHz;
 
   generate(p);
+  updateCanvasZoom();
   initAstarArrays();
   setStatus("READY");
   log(`生成完成：工人(含獵人)=${state.workers.length} 斥侯=${state.scouts.length} 動物=${state.animals.length}`);
@@ -434,11 +464,13 @@ function raf(t){
 }
 
 resizeCanvases();
+updateCanvasZoom();
 state.ctx.fillStyle="#111"; state.ctx.fillRect(0,0,state.canvas.width,state.canvas.height);
-log(`v13.2：unit sprite (4-way static) 已啟用（mode=${RENDER_MODE}）。`);
+log(`v13.3：animals/builder sprites + map zoom 已啟用（mode=${RENDER_MODE}）。`);
 setStatus("READY");
 updateInfo();
 refreshTechUI();
 refreshBuildUI();
 requestAnimationFrame(raf);
+window.addEventListener("resize", updateCanvasZoom);
 

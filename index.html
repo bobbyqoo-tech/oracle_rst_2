@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Mini RTS - v13.2 (Unit Sprites 4-way Static)</title>
+  <title>Mini RTS - v13.3 (Animals, Builder Sprites, Map Zoom)</title>
   <style>
     body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Arial,"Noto Sans TC",sans-serif;}
     .wrap{display:grid;grid-template-columns:minmax(0,1fr) 320px 520px;height:100vh;}
     .gamepane{background:#050505;display:flex;align-items:center;justify-content:center;overflow:auto;min-width:0;}
-    canvas{display:block;background:#111;image-rendering:pixelated;max-width:100%;max-height:100%;}
+    canvas{display:block;background:#111;image-rendering:pixelated;flex:0 0 auto;}
     .panel{background:#0b0b0b;color:#ddd;padding:12px;overflow:auto;border-left:1px solid #222;}
     .midpanel{background:#0b0b0b;color:#ddd;padding:12px;overflow:auto;border-left:1px solid #222;}
     .panel h2{margin:0 0 8px;font-size:16px;}
@@ -28,6 +28,7 @@
     .hpall{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:11px;white-space:pre-wrap;background:#090909;border:1px solid #222;padding:8px;border-radius:6px;height:calc(100vh - 120px);overflow:auto;}
     .small{font-size:12px;color:#aaa;margin:8px 0 6px;}
     .stats{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;white-space:pre-wrap;background:#0a0a0a;border:1px solid #222;padding:8px;border-radius:6px;}
+    .zoomval{min-width:52px;display:inline-block;color:#ddd;font-size:12px;}
   </style>
 </head>
 <body>
@@ -43,7 +44,7 @@
     <div class="stats" id="statPanel"></div>
   </div>
   <div class="panel">
-    <h2>Mini RTS v13.2：Unit Sprites (4-way static)</h2>
+    <h2>Mini RTS v13.3：Animals + Builder Sprites + Map Zoom</h2>
     <div class="hint">
       玩法：調參數 → 生成地圖 → 開始。點選資源可設定偏好目標。<br/>
       <b>獵人</b>：追擊野生動物，擊殺後採集肉並回倉庫交付。<br/>
@@ -95,6 +96,13 @@
       <button id="step">單步</button>
       <button id="clearlog">清除訊息</button>
       <span class="tag" id="statusTag">READY</span>
+    </div>
+    <div class="row" style="margin-bottom:6px;">
+      <label>地圖縮放
+        <input id="zoomRange" type="range" min="25" max="400" step="5" value="100" style="width:180px;"/>
+      </label>
+      <span class="zoomval" id="zoomLabel">100%</span>
+      <button id="zoomReset">重設</button>
     </div>
 
     <div class="row" style="margin-bottom:6px;">
@@ -156,6 +164,6 @@
   </div>
 </div>
 
-<script type="module" src="src/main.js?v=13.2"></script>
+<script type="module" src="src/main.js?v=13.3"></script>
 </body>
 </html>
