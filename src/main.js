@@ -466,7 +466,7 @@ function raf(t){
 resizeCanvases();
 updateCanvasZoom();
 state.ctx.fillStyle="#111"; state.ctx.fillRect(0,0,state.canvas.width,state.canvas.height);
-log(`v13.4：visual polish pass 已啟用（mode=${RENDER_MODE}）。`);
+log(`v13.4 The first light / 初見之光：visual polish pass 已啟用（mode=${RENDER_MODE}）。`);
 setStatus("READY");
 updateInfo();
 refreshTechUI();

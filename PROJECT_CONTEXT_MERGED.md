@@ -2,7 +2,7 @@
 
 Last Updated: 2026-02-25  
 Current Main Branch: `main`  
-Current Version Label: `v13.4`
+Current Version Label: `v13.4` (`The first light / 初見之光`)
 
 ## 1) Project Overview
 
@@ -76,7 +76,7 @@ Live run mode:
 - Lumber/miner workers now retarget to other resources if blocked too long or if no valid stand tile is available for the current target.
 - Goal: reduce "workers stuck in one lump" behavior and unblock completed gatherers from leaving crowded resource fronts.
 
-### New in v13 (Render Stage 2 - Real Sprite Pipeline, 24px)
+### New in v13 (Render Stage 2 - Real Sprite Pipeline, 24px) — Codename: The first light / 初見之光
 
 - Fixed render tile size to `24px` (visual scale only; world coordinates remain grid-based).
 - Added real sprite asset folder under `assets/sprites/*` and cached image loader (`src/render/assets.js`).
@@ -246,7 +246,7 @@ Commit:
   - `ver11/index.html`
   - `ver11/index_single.html`
 - `ver12/` currently also carries v12.1 hotfix snapshot updates (same folder, direct in-place patching).
-- `ver13/` created as a v13-series snapshot (includes `src/`, `assets/`, `index.html`, `index_single.html`).
+- `ver13/` created as a v13-series snapshot (codename: `The first light / 初見之光`; includes `src/`, `assets/`, `index.html`, `index_single.html`).
 
 ## 6) Quick Verification Checklist (v13.4)
 
