@@ -289,3 +289,11 @@ Commit:
 Asset Naming:
 Final asset naming conventions are pending.
 All asset keys must be routed through a manifest for easy remapping.
+
+## 9) 2026-02-26 GitHub Pages URL Split (Ops Note)
+
+- Root public demo URL (`/oracle_rst_2/`) should remain stable for external users.
+- Root `index.html` now loads archived runtime `ver13/src/main.js?v=13.4` to decouple it from active development files.
+- New testing entry URL: `/oracle_rst_2/dev.html`.
+- `dev.html` loads live runtime `src/main.js?v=dev` and should be used for personal WIP/debug validation.
+- Future release workflow: when a new version is finalized, archive it (e.g. `ver14/`) and repoint root `index.html` to that archived version.
