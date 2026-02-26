@@ -1,5 +1,14 @@
 const assetManifest = new Map();
 const assetCache = new Map();
+const warnedKeys = new Set();
+
+function warnOnce(key, msg, extra=null){
+  const id = `${key}|${msg}`;
+  if(warnedKeys.has(id)) return;
+  warnedKeys.add(id);
+  if(extra!=null) console.warn(`[render-assets] ${msg}: ${key}`, extra);
+  else console.warn(`[render-assets] ${msg}: ${key}`);
+}
 
 function configureRenderAssets(manifest){
   if(!manifest) return;
@@ -23,6 +32,9 @@ function ensureAssetRecord(key){
     warned: false,
   };
   assetCache.set(key, rec);
+  if(rec.status==="missing"){
+    warnOnce(key, "Missing manifest entry");
+  }
   return rec;
 }
 
@@ -41,6 +53,7 @@ function loadRenderAsset(key){
     rec.image.onerror = (err)=>{
       rec.status = "error";
       rec.error = err || new Error(`Failed to load ${rec.url || key}`);
+      warnOnce(key, `Failed to load asset (${rec.url || "no-url"})`, rec.error);
       resolve(rec);
     };
   });
@@ -64,6 +77,9 @@ function isRenderAssetReady(key){
 function drawCachedSprite(ctx, key, dx, dy, dw, dh){
   const rec = ensureAssetRecord(key);
   if(rec.status==="idle") loadRenderAsset(key);
+  if(rec.status==="missing"){
+    warnOnce(key, "Sprite key unresolved in manifest");
+  }
   if(rec.status!=="ready" || !rec.image) return false;
   ctx.drawImage(rec.image, dx, dy, dw, dh);
   return true;

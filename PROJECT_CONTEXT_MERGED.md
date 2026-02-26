@@ -2,7 +2,7 @@
 
 Last Updated: 2026-02-25  
 Current Main Branch: `main`  
-Current Version Label: `v13.3`
+Current Version Label: `v13.4`
 
 ## 1) Project Overview
 
@@ -104,6 +104,15 @@ Live run mode:
 - Added sprite rendering for `builder` units (static 4-way directional).
 - Added map zoom control (UI slider + reset) that scales only the canvas display, not the side panels/UI.
 - Hover/click coordinate mapping remains correct under canvas zoom scaling.
+
+### New in v13.4 (Visual Polish Pass)
+
+- Added minimal unit HP bars rendered above unit sprites only when HP is below max.
+- Improved fog-of-war visuals with soft gradient edges at visible boundary (fog logic/data unchanged).
+- Added foot-based Y depth sorting for sprite-mode dynamic drawables (buildings/resources/animals/units).
+- Asset pipeline polish:
+  - centralized manifest routing remains the source of truth for asset keys
+  - missing/unresolved assets warn only once and fall back safely
 
 ## 3) Recent Fixes (Critical)
 
@@ -247,3 +256,7 @@ Commit:
 - If command appears stuck, re-run as a single simple command segment.
 - Prefer already-approved command patterns.
 - For shell content reads, `Get-Content` should be used directly.
+
+Asset Naming:
+Final asset naming conventions are pending.
+All asset keys must be routed through a manifest for easy remapping.

@@ -152,6 +152,11 @@ function drawBuildingSpriteWithFallback(state, b){
   if(key && drawAnchoredSprite(ctx, state, key, b.x, b.y, 24, 24)) return true;
   return false;
 }
+function drawBuildingSpriteInFrame(ctx, state, b){
+  const key = b.built ? buildingKey(b.type) : "building.site";
+  if(key && drawAnchoredSprite(ctx, state, key, b.x, b.y, 24, 24)) return true;
+  return false;
+}
 
 function getUnitTargetPos(state, u){
   if(u.path && u.path.length){
@@ -208,6 +213,24 @@ function drawUnitPlaceholder(ctx, state, u){
   ctx.fillStyle="rgba(255,255,255,0.30)";
   ctx.fillRect(p.px+2, p.py+2, Math.max(1,(state.TILEPX/4)|0), 1);
 }
+function drawUnitHpBar(ctx, state, u){
+  if(u.hp>=u.maxHP || u.maxHP<=0) return;
+  const p=tileBox(state, u.x, u.y);
+  const w=Math.max(10, (state.TILEPX*0.72)|0);
+  const h=3;
+  const x=Math.round(p.cx - w/2);
+  const y=Math.round(p.cy - 32 - 4);
+  const frac=Math.max(0, Math.min(1, u.hp/u.maxHP));
+  let fill="rgb(70,220,110)";
+  if(frac<0.5) fill="rgb(255,210,80)";
+  if(frac<0.25) fill="rgb(255,90,90)";
+  ctx.fillStyle="rgba(0,0,0,0.55)";
+  ctx.fillRect(x-1,y-1,w+2,h+2);
+  ctx.fillStyle="rgba(25,25,25,0.95)";
+  ctx.fillRect(x,y,w,h);
+  ctx.fillStyle=fill;
+  ctx.fillRect(x,y,Math.max(1,Math.round(w*frac)),h);
+}
 
 function animalTargetPos(state, a){
   if(a.targetUnitId!=null && a.targetUnitId>=0){
@@ -250,6 +273,17 @@ function drawAnimalPlaceholder(ctx, state, a){
   ctx.fillRect(p.px+2, p.py+2, Math.max(1,(state.TILEPX/4)|0), 1);
 }
 
+function pushDrawable(list, footY, footX, layer, draw){
+  list.push({ footY, footX, layer, draw });
+}
+function sortDrawables(list){
+  list.sort((a,b)=>{
+    if(a.footY!==b.footY) return a.footY-b.footY;
+    if(a.layer!==b.layer) return a.layer-b.layer;
+    return a.footX-b.footX;
+  });
+}
+
 function drawGroundTileSprite(state, x, y){
   if(drawCachedSprite(state.baseCtx, "terrain.ground", x*state.TILEPX, y*state.TILEPX, state.TILEPX, state.TILEPX)) return;
   fallbackTerrainTile(state, x, y);
@@ -261,12 +295,6 @@ function drawBlockTileSprite(state, x, y){
 }
 
 function renderSpriteStorageAndRings(state){
-  for(const b of state.buildings){
-    if(!drawBuildingSpriteWithFallback(state, b)){
-      fallbackBuildingBaseTile(state, b);
-    }
-  }
-
   state.baseCtx.fillStyle="rgba(220,200,60,0.22)";
   for(const ti of state.dropTiles){
     state.baseCtx.fillRect(xOf(state, ti)*state.TILEPX, yOf(state, ti)*state.TILEPX, state.TILEPX, state.TILEPX);
@@ -292,9 +320,8 @@ function renderSpriteBaseAll(state){
 }
 
 function renderSpriteResourceBaseTile(state, kind, x, y){
-  if(!drawResourceSpriteWithFallback(state.baseCtx, state, kind, x, y)){
-    fallbackResourceBaseTile(state, kind, x, y);
-  }
+  // Sprite mode draws resources in frame-time for depth sorting.
+  return;
 }
 
 function renderSpriteEraseBaseTile(state, i, helpers={}){
@@ -326,6 +353,102 @@ function primeSpriteAssets(state, onReady){
   return spriteAssetsPromise;
 }
 
+function addBuildingDrawables(state, list){
+  for(const b of state.buildings){
+    const footX=b.x*state.TILEPX + state.TILEPX/2;
+    const footY=b.y*state.TILEPX + state.TILEPX/2;
+    pushDrawable(list, footY, footX, 10, ()=>{
+      if(drawBuildingSpriteInFrame(state.ctx, state, b)) return;
+      const prev=state.baseCtx;
+      state.baseCtx=state.ctx;
+      try{ fallbackBuildingBaseTile(state, b); } finally { state.baseCtx=prev; }
+    });
+  }
+}
+function addResourceDrawables(state, list){
+  for(const id of state.knownTreeIds){
+    const t=state.trees[id];
+    if(!t || !t.alive) continue;
+    const i=idxOf(state,t.x,t.y);
+    if(!state.explored[i]) continue;
+    const footX=t.x*state.TILEPX + state.TILEPX/2;
+    const footY=t.y*state.TILEPX + state.TILEPX/2;
+    pushDrawable(list, footY, footX, 20, ()=>{
+      if(!drawResourceSpriteWithFallback(state.ctx, state, "tree", t.x, t.y)){
+        const p=tileBox(state, t.x, t.y);
+        state.ctx.fillStyle="rgba(0,0,0,0.18)";
+        state.ctx.fillRect(p.px+1, p.py+1, state.TILEPX-2, state.TILEPX-2);
+        drawDisc(state.ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.38), "rgb(32,170,60)", "rgba(10,60,20,0.9)");
+        drawDisc(state.ctx, p.cx, p.cy+1, Math.max(1,state.TILEPX*0.18), "rgb(70,90,40)");
+      }
+    });
+  }
+  for(const id of state.knownRockIds){
+    const r=state.rocks[id];
+    if(!r || !r.alive) continue;
+    const i=idxOf(state,r.x,r.y);
+    if(!state.explored[i]) continue;
+    const footX=r.x*state.TILEPX + state.TILEPX/2;
+    const footY=r.y*state.TILEPX + state.TILEPX/2;
+    pushDrawable(list, footY, footX, 21, ()=>{
+      if(!drawResourceSpriteWithFallback(state.ctx, state, "rock", r.x, r.y)){
+        const p=tileBox(state, r.x, r.y);
+        state.ctx.fillStyle="rgb(132,90,220)";
+        state.ctx.beginPath();
+        state.ctx.moveTo(p.cx, p.py+1);
+        state.ctx.lineTo(p.px+state.TILEPX-1, p.cy);
+        state.ctx.lineTo(p.cx+1, p.py+state.TILEPX-1);
+        state.ctx.lineTo(p.px+1, p.cy+1);
+        state.ctx.closePath();
+        state.ctx.fill();
+        state.ctx.strokeStyle="rgba(230,220,255,0.6)";
+        state.ctx.lineWidth=1;
+        state.ctx.stroke();
+      }
+    });
+  }
+  for(const id of state.knownMeatIds){
+    const m=state.meats[id];
+    if(!m || !m.alive) continue;
+    const i=idxOf(state,m.x,m.y);
+    if(!state.explored[i]) continue;
+    const footX=m.x*state.TILEPX + state.TILEPX/2;
+    const footY=m.y*state.TILEPX + state.TILEPX/2;
+    pushDrawable(list, footY, footX, 22, ()=>{
+      if(!drawResourceSpriteWithFallback(state.ctx, state, "meat", m.x, m.y)){
+        const p=tileBox(state, m.x, m.y);
+        drawDisc(state.ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.34), "rgb(190,95,70)", "rgba(80,30,20,0.85)");
+        drawDisc(state.ctx, p.cx+1, p.cy-1, Math.max(1,state.TILEPX*0.10), "rgba(255,220,210,0.55)");
+      }
+    });
+  }
+}
+function addAnimalDrawables(state, list){
+  for(const a of state.animals){
+    if(a.state==="Dead") continue;
+    const i=idxOf(state,a.x,a.y);
+    if(!state.visible[i]) continue;
+    const footX=a.x*state.TILEPX + state.TILEPX/2;
+    const footY=a.y*state.TILEPX + state.TILEPX/2;
+    pushDrawable(list, footY, footX, 30, ()=>{
+      if(!drawAnimalSprite(state.ctx, state, a)) drawAnimalPlaceholder(state.ctx, state, a);
+    });
+  }
+}
+function addUnitDrawables(state, list){
+  for(const u of state.units){
+    if(u.dead) continue;
+    const i=idxOf(state,u.x,u.y);
+    if(!state.visible[i]) continue;
+    const footX=u.x*state.TILEPX + state.TILEPX/2;
+    const footY=u.y*state.TILEPX + state.TILEPX/2;
+    pushDrawable(list, footY, footX, 40, ()=>{
+      if(!drawUnitSprite(state.ctx, state, u)) drawUnitPlaceholder(state.ctx, state, u);
+      drawUnitHpBar(state.ctx, state, u);
+    });
+  }
+}
+
 function renderSpriteFrame(state){
   const ctx=state.ctx;
   if(!state.grid){
@@ -336,77 +459,13 @@ function renderSpriteFrame(state){
 
   ctx.clearRect(0,0,state.canvas.width,state.canvas.height);
   ctx.drawImage(state.baseLayer,0,0);
-
-  for(const id of state.knownTreeIds){
-    const t=state.trees[id];
-    if(!t || !t.alive) continue;
-    const i=idxOf(state, t.x, t.y);
-    if(!state.visible[i]) continue;
-    if(!drawResourceSpriteWithFallback(ctx, state, "tree", t.x, t.y)){
-      const p=tileBox(state, t.x, t.y);
-      ctx.fillStyle="rgba(0,0,0,0.18)";
-      ctx.fillRect(p.px+1, p.py+1, state.TILEPX-2, state.TILEPX-2);
-      drawDisc(ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.38), "rgb(32,170,60)", "rgba(10,60,20,0.9)");
-      drawDisc(ctx, p.cx, p.cy+1, Math.max(1,state.TILEPX*0.18), "rgb(70,90,40)");
-    }
-  }
-
-  for(const id of state.knownRockIds){
-    const r=state.rocks[id];
-    if(!r || !r.alive) continue;
-    const i=idxOf(state, r.x, r.y);
-    if(!state.visible[i]) continue;
-    if(!drawResourceSpriteWithFallback(ctx, state, "rock", r.x, r.y)){
-      const p=tileBox(state, r.x, r.y);
-      ctx.fillStyle="rgb(132,90,220)";
-      ctx.beginPath();
-      ctx.moveTo(p.cx, p.py+1);
-      ctx.lineTo(p.px+state.TILEPX-1, p.cy);
-      ctx.lineTo(p.cx+1, p.py+state.TILEPX-1);
-      ctx.lineTo(p.px+1, p.cy+1);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle="rgba(230,220,255,0.6)";
-      ctx.lineWidth=1;
-      ctx.stroke();
-    }
-  }
-
-  for(const id of state.knownMeatIds){
-    const m=state.meats[id];
-    if(!m || !m.alive) continue;
-    const i=idxOf(state, m.x, m.y);
-    if(!state.visible[i]) continue;
-    if(!drawResourceSpriteWithFallback(ctx, state, "meat", m.x, m.y)){
-      const p=tileBox(state, m.x, m.y);
-      drawDisc(ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.34), "rgb(190,95,70)", "rgba(80,30,20,0.85)");
-      drawDisc(ctx, p.cx+1, p.cy-1, Math.max(1,state.TILEPX*0.10), "rgba(255,220,210,0.55)");
-    }
-  }
-
-  for(const a of state.animals){
-    if(a.state==="Dead") continue;
-    const i=idxOf(state, a.x, a.y);
-    if(!state.visible[i]) continue;
-    if(!drawAnimalSprite(ctx, state, a)){
-      drawAnimalPlaceholder(ctx, state, a);
-    }
-  }
-
-  for(const u of state.units){
-    if(u.dead) continue;
-    const i=idxOf(state, u.x, u.y);
-    if(!state.visible[i]) continue;
-    if(!drawUnitSprite(ctx, state, u)){
-      drawUnitPlaceholder(ctx, state, u);
-    }
-
-    const frac=u.hp/u.maxHP;
-    if(frac<0.45){
-      ctx.fillStyle = frac<0.2 ? "rgb(255,80,80)" : "rgb(255,210,80)";
-      ctx.fillRect(u.x*state.TILEPX, u.y*state.TILEPX, Math.max(1,(state.TILEPX/3)|0), Math.max(1,(state.TILEPX/3)|0));
-    }
-  }
+  const drawables=[];
+  addBuildingDrawables(state, drawables);
+  addResourceDrawables(state, drawables);
+  addAnimalDrawables(state, drawables);
+  addUnitDrawables(state, drawables);
+  sortDrawables(drawables);
+  for(const d of drawables) d.draw();
 
   for(const ti of state.dropTiles){
     const r=state.dropReservedBy[ti];

@@ -72,6 +72,40 @@ function eraseTileToBackground(i){
   });
 }
 
+function fogEdgeAlphaForTile(i){
+  if(!state.explored[i]) return 1.0;
+  if(!state.visible[i]) return 0.55;
+  return 0;
+}
+function drawFogSoftEdgeForVisibleTile(i){
+  const x=xOf(i), y=yOf(i);
+  const px=x*state.TILEPX, py=y*state.TILEPX;
+  const w=state.TILEPX, h=state.TILEPX;
+  const edge=Math.max(2, Math.floor(state.TILEPX*0.6));
+  const dirs=[
+    { dx:0, dy:-1, x1:px, y1:py, x2:px, y2:py+edge, rect:[px,py,w,edge], axis:"v", side:"top" },
+    { dx:1, dy:0, x1:px+w, y1:py, x2:px+w-edge, y2:py, rect:[px+w-edge,py,edge,h], axis:"h", side:"right" },
+    { dx:0, dy:1, x1:px, y1:py+h, x2:px, y2:py+h-edge, rect:[px,py+h-edge,w,edge], axis:"v", side:"bottom" },
+    { dx:-1, dy:0, x1:px, y1:py, x2:px+edge, y2:py, rect:[px,py,edge,h], axis:"h", side:"left" },
+  ];
+  for(const d of dirs){
+    const nx=x+d.dx, ny=y+d.dy;
+    let a=1.0;
+    if(inBounds(nx,ny)){
+      a = fogEdgeAlphaForTile(idx(nx,ny));
+    }
+    if(a<=0) continue;
+    const g = (d.axis==="v")
+      ? state.fogCtx.createLinearGradient(d.x1,d.y1,d.x2,d.y2)
+      : state.fogCtx.createLinearGradient(d.x1,d.y1,d.x2,d.y2);
+    const edgeAlpha = Math.min(0.95, a*0.85);
+    g.addColorStop(0, `rgba(0,0,0,${edgeAlpha})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    state.fogCtx.fillStyle=g;
+    state.fogCtx.fillRect(d.rect[0], d.rect[1], d.rect[2], d.rect[3]);
+  }
+}
+
 function drawFogTile(i){
   const x=xOf(i), y=yOf(i);
   if(!state.explored[i]){
@@ -85,6 +119,7 @@ function drawFogTile(i){
     return;
   }
   state.fogCtx.clearRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
+  drawFogSoftEdgeForVisibleTile(i);
 }
 function drawFogAll(){ clearCanvas(state.fogCtx); for(let i=0;i<N;i++) drawFogTile(i); }
 
