@@ -226,7 +226,7 @@ function drawUnitHpBar(ctx, state, u){
   if(frac<0.25) fill="rgb(255,90,90)";
   ctx.fillStyle="rgba(0,0,0,0.55)";
   ctx.fillRect(x-1,y-1,w+2,h+2);
-  ctx.fillStyle="rgba(25,25,25,0.95)";
+  ctx.fillStyle="rgba(160,28,28,0.95)";
   ctx.fillRect(x,y,w,h);
   ctx.fillStyle=fill;
   ctx.fillRect(x,y,Math.max(1,Math.round(w*frac)),h);

@@ -81,29 +81,30 @@ function drawFogSoftEdgeForVisibleTile(i){
   const x=xOf(i), y=yOf(i);
   const px=x*state.TILEPX, py=y*state.TILEPX;
   const w=state.TILEPX, h=state.TILEPX;
-  const edge=Math.max(2, Math.floor(state.TILEPX*0.6));
-  const dirs=[
-    { dx:0, dy:-1, x1:px, y1:py, x2:px, y2:py+edge, rect:[px,py,w,edge], axis:"v", side:"top" },
-    { dx:1, dy:0, x1:px+w, y1:py, x2:px+w-edge, y2:py, rect:[px+w-edge,py,edge,h], axis:"h", side:"right" },
-    { dx:0, dy:1, x1:px, y1:py+h, x2:px, y2:py+h-edge, rect:[px,py+h-edge,w,edge], axis:"v", side:"bottom" },
-    { dx:-1, dy:0, x1:px, y1:py, x2:px+edge, y2:py, rect:[px,py,edge,h], axis:"h", side:"left" },
-  ];
-  for(const d of dirs){
-    const nx=x+d.dx, ny=y+d.dy;
-    let a=1.0;
-    if(inBounds(nx,ny)){
-      a = fogEdgeAlphaForTile(idx(nx,ny));
+  let edgeStrength=0;
+  for(let dy=-1; dy<=1; dy++){
+    for(let dx=-1; dx<=1; dx++){
+      if(dx===0 && dy===0) continue;
+      const nx=x+dx, ny=y+dy;
+      let a=1.0;
+      if(inBounds(nx,ny)) a=fogEdgeAlphaForTile(idx(nx,ny));
+      if(a>edgeStrength) edgeStrength=a;
     }
-    if(a<=0) continue;
-    const g = (d.axis==="v")
-      ? state.fogCtx.createLinearGradient(d.x1,d.y1,d.x2,d.y2)
-      : state.fogCtx.createLinearGradient(d.x1,d.y1,d.x2,d.y2);
-    const edgeAlpha = Math.min(0.95, a*0.85);
-    g.addColorStop(0, `rgba(0,0,0,${edgeAlpha})`);
-    g.addColorStop(1, "rgba(0,0,0,0)");
-    state.fogCtx.fillStyle=g;
-    state.fogCtx.fillRect(d.rect[0], d.rect[1], d.rect[2], d.rect[3]);
   }
+  if(edgeStrength<=0) return;
+
+  const cx=px + w/2;
+  const cy=py + h/2;
+  const innerR=Math.max(1, state.TILEPX*0.18);
+  const outerR=Math.max(innerR+1, state.TILEPX*0.95);
+  const g=state.fogCtx.createRadialGradient(cx,cy,innerR,cx,cy,outerR);
+  const aOuter=Math.min(0.72, 0.40 + edgeStrength*0.20);
+  g.addColorStop(0.00, "rgba(0,0,0,0)");
+  g.addColorStop(0.45, "rgba(0,0,0,0.03)");
+  g.addColorStop(0.72, `rgba(0,0,0,${(aOuter*0.55).toFixed(3)})`);
+  g.addColorStop(1.00, `rgba(0,0,0,${aOuter.toFixed(3)})`);
+  state.fogCtx.fillStyle=g;
+  state.fogCtx.fillRect(px,py,w,h);
 }
 
 function drawFogTile(i){
