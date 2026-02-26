@@ -370,7 +370,7 @@ function addResourceDrawables(state, list){
     const t=state.trees[id];
     if(!t || !t.alive) continue;
     const i=idxOf(state,t.x,t.y);
-    if(!state.explored[i]) continue;
+    if(!state.visible[i]) continue;
     const footX=t.x*state.TILEPX + state.TILEPX/2;
     const footY=t.y*state.TILEPX + state.TILEPX/2;
     pushDrawable(list, footY, footX, 20, ()=>{
@@ -387,7 +387,7 @@ function addResourceDrawables(state, list){
     const r=state.rocks[id];
     if(!r || !r.alive) continue;
     const i=idxOf(state,r.x,r.y);
-    if(!state.explored[i]) continue;
+    if(!state.visible[i]) continue;
     const footX=r.x*state.TILEPX + state.TILEPX/2;
     const footY=r.y*state.TILEPX + state.TILEPX/2;
     pushDrawable(list, footY, footX, 21, ()=>{
@@ -411,7 +411,7 @@ function addResourceDrawables(state, list){
     const m=state.meats[id];
     if(!m || !m.alive) continue;
     const i=idxOf(state,m.x,m.y);
-    if(!state.explored[i]) continue;
+    if(!state.visible[i]) continue;
     const footX=m.x*state.TILEPX + state.TILEPX/2;
     const footY=m.y*state.TILEPX + state.TILEPX/2;
     pushDrawable(list, footY, footX, 22, ()=>{
