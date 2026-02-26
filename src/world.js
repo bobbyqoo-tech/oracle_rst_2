@@ -72,6 +72,55 @@ function eraseTileToBackground(i){
   });
 }
 
+function fogMaskAlphaAt(x,y){
+  if(!inBounds(x,y)) return 1.0;
+  const i=idx(x,y);
+  if(!state.explored[i]) return 1.0;
+  if(!state.visible[i]) return 0.55;
+  return 0;
+}
+function drawFogSoftEdgeForVisibleTile(i){
+  const x=xOf(i), y=yOf(i);
+  const px=x*state.TILEPX, py=y*state.TILEPX;
+  const s=state.TILEPX;
+  const edge=Math.max(2, Math.floor(s*0.28));
+
+  const nA=fogMaskAlphaAt(x, y-1);
+  const eA=fogMaskAlphaAt(x+1, y);
+  const sA=fogMaskAlphaAt(x, y+1);
+  const wA=fogMaskAlphaAt(x-1, y);
+
+  function edgeFade(rectX, rectY, rectW, rectH, x1,y1,x2,y2, a){
+    if(a<=0) return;
+    const g=state.fogCtx.createLinearGradient(x1,y1,x2,y2);
+    const outer=Math.min(0.32, 0.08 + a*0.22);
+    g.addColorStop(0, `rgba(0,0,0,${outer.toFixed(3)})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    state.fogCtx.fillStyle=g;
+    state.fogCtx.fillRect(rectX,rectY,rectW,rectH);
+  }
+
+  edgeFade(px, py, s, edge, px, py, px, py+edge, nA);
+  edgeFade(px+s-edge, py, edge, s, px+s, py, px+s-edge, py, eA);
+  edgeFade(px, py+s-edge, s, edge, px, py+s, px, py+s-edge, sA);
+  edgeFade(px, py, edge, s, px, py, px+edge, py, wA);
+
+  const c=Math.max(2, Math.floor(s*0.20));
+  function cornerFade(cx,cy, a){
+    if(a<=0) return;
+    const g=state.fogCtx.createRadialGradient(cx,cy,0,cx,cy,c);
+    const outer=Math.min(0.20, 0.05 + a*0.12);
+    g.addColorStop(0, `rgba(0,0,0,${outer.toFixed(3)})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    state.fogCtx.fillStyle=g;
+    state.fogCtx.fillRect(cx-c, cy-c, c*2, c*2);
+  }
+  cornerFade(px, py, Math.max(nA, wA, fogMaskAlphaAt(x-1,y-1)));
+  cornerFade(px+s, py, Math.max(nA, eA, fogMaskAlphaAt(x+1,y-1)));
+  cornerFade(px, py+s, Math.max(sA, wA, fogMaskAlphaAt(x-1,y+1)));
+  cornerFade(px+s, py+s, Math.max(sA, eA, fogMaskAlphaAt(x+1,y+1)));
+}
+
 function drawFogTile(i){
   const x=xOf(i), y=yOf(i);
   if(!state.explored[i]){
@@ -85,6 +134,7 @@ function drawFogTile(i){
     return;
   }
   state.fogCtx.clearRect(x*state.TILEPX,y*state.TILEPX,state.TILEPX,state.TILEPX);
+  drawFogSoftEdgeForVisibleTile(i);
 }
 function drawFogAll(){ clearCanvas(state.fogCtx); for(let i=0;i<N;i++) drawFogTile(i); }
 
