@@ -18,7 +18,7 @@ Live run mode:
 - Open `index.html` directly via Live Server or GitHub Pages.
 - ES Modules are used (`<script type="module">`).
 
-## 2) Implemented Features (As Of v13)
+## 2) Implemented Features (As Of v13.4)
 
 ### Core simulation
 
@@ -95,7 +95,7 @@ Live run mode:
 - Replaced unit placeholder rendering (for `lumber`, `miner`, `hunter`, `scout`) with sprite rendering in sprite mode.
 - Direction selection is 4-way (`N/E/S/W`) and derived from existing path/target movement vectors (no animation/state logic changes).
 - Unit sprites use foot-on-ground anchor and may exceed tile height vertically.
-- `builder` units currently keep placeholder fallback rendering.
+- `builder` sprite support was added in v13.3.
 - Missing unit sprite assets fall back to existing placeholder unit rendering.
 
 ### New in v13.3 (Render Stage 4 - Animal/Builder Sprites + Map Zoom)
@@ -108,11 +108,13 @@ Live run mode:
 ### New in v13.4 (Visual Polish Pass)
 
 - Added minimal unit HP bars rendered above unit sprites only when HP is below max.
-- Improved fog-of-war visuals with soft gradient edges at visible boundary (fog logic/data unchanged).
+- Improved fog-of-war visuals with subtle edge softening at visible boundary (fog logic/data unchanged).
 - Added foot-based Y depth sorting for sprite-mode dynamic drawables (buildings/resources/animals/units).
 - Asset pipeline polish:
   - centralized manifest routing remains the source of truth for asset keys
   - missing/unresolved assets warn only once and fall back safely
+- HP bars use a red missing-HP segment.
+- Fixed a v13.4 regression where resources could render under fog when only explored.
 
 ## 3) Recent Fixes (Critical)
 
@@ -148,15 +150,31 @@ Commit:
 
 - `05710a5` (`Retry reclass pathing when guild tiles are congested`)
 
-## 4) v13 File-Level Notes
+### Fix C: Hidden resources rendered under fog after depth sorting (v13.4 regression)
+
+Problem:
+
+- Resource drawables were temporarily rendered for `explored` tiles instead of `visible` tiles.
+- This caused visible artifacts under fog after the sprite depth-sorting refactor.
+
+Fix:
+
+- Sprite-mode resource drawables (`tree` / `rock` / `meat`) now render only when the tile is currently `visible`.
+
+Commit:
+
+- `2f39f63` (`Fix hidden resource rendering under fog`)
+
+## 4) v13.4 File-Level Notes
 
 ### `index.html`
 
-- Title and header updated to v13 text.
+- Title and header updated to v13.4 text.
 - Build dropdown labels now include cost hints.
 - Added `#buildCost` and `#hoverCoordLabel`.
 - Tile size UI is fixed to 24px.
-- Script source: `src/main.js?v=13`.
+- Added map zoom controls (`#zoomRange`, `#zoomReset`, `#zoomLabel`) for canvas-only zoom.
+- Script source: `src/main.js?v=13.4`.
 
 ### `src/main.js`
 
@@ -166,7 +184,8 @@ Commit:
 - Added `RENDER_MODE` single switch and renderer initialization.
 - Fixed `tilePx` generation parameter to 24 and disabled tile-size input editing.
 - Triggers renderer asset preload and redraw after sprite assets finish loading.
-- Updated startup log text to v13.
+- Added canvas fit/zoom display logic with correct tile picking under CSS scaling.
+- Updated startup log text to v13.4.
 
 ### `src/sim.js`
 
@@ -187,10 +206,14 @@ Commit:
 - Sprite renderer using cached `drawImage` assets with placeholder fallbacks.
 - Includes 24px foot-anchor sprite placement for resources/buildings.
 - Added static 4-way unit sprite rendering with direction inference from existing path/target vectors.
+- Added wildlife + builder sprite rendering (4-way static; wildlife is state-based).
+- Added foot-based Y depth sorting for sprite-mode drawables.
+- Added minimal damaged-unit HP bars.
 
 ### `src/render/assets.js`
 
 - Cached image loader/manifest helper for sprite rendering (no per-frame `Image()` creation).
+- Missing/unresolved assets now warn only once.
 
 ### `assets/sprites/units/*`
 
@@ -205,6 +228,7 @@ Commit:
 
 - Generation center moved to right-bottom offset (`~65%` map position with padding safeguards).
 - `spawnClusteredPoints()` now grows connected cluster blobs for tree/rock placement.
+- Fog rendering visuals include subtle edge softening (logic/data unchanged).
 
 ### `src/sim.js` (v12.1 hotfix)
 
@@ -222,8 +246,9 @@ Commit:
   - `ver11/index.html`
   - `ver11/index_single.html`
 - `ver12/` currently also carries v12.1 hotfix snapshot updates (same folder, direct in-place patching).
+- `ver13/` created as a v13-series snapshot (includes `src/`, `assets/`, `index.html`, `index_single.html`).
 
-## 6) Quick Verification Checklist (v13)
+## 6) Quick Verification Checklist (v13.4)
 
 1. Generate map.
 2. Move mouse over canvas and verify live coordinate updates in side panel (no click needed).
@@ -235,10 +260,13 @@ Commit:
 8. Confirm unit moves to guild, finishes reclass, and role behavior changes.
 9. Confirm initial town/units appear right-bottom relative to map center.
 10. Set `RENDER_MODE="pixel"` and confirm visuals match prior behavior.
-11. Set `RENDER_MODE="sprite"` and confirm placeholder shape renderer displays units/resources/fog correctly.
+11. Set `RENDER_MODE="sprite"` and confirm sprite rendering displays terrain/resources/buildings/units/animals correctly.
 12. Stress test with high lumber/miner counts and confirm blocked gatherers retarget instead of staying stuck on one resource.
 13. Confirm tile size is fixed at 24px and coordinate logic remains unchanged.
-14. Set `RENDER_MODE="sprite"` and verify terrain/obstacles/resources/buildings render via image sprites; temporarily rename an asset to confirm fallback visuals still render.
+14. Temporarily rename one asset and confirm fallback visuals still render and warning appears only once.
+15. Damage a unit and confirm only damaged units show HP bars with a red missing-HP segment.
+16. Check overlap around trees/buildings/units and confirm foot-based depth sorting looks natural.
+17. Confirm fog edge softening is subtle and resources are not visible under fog unless currently visible.
 
 ## 7) Operational Notes For New Chat Continuation
 
@@ -246,7 +274,8 @@ Commit:
 - Default target file set for new features:
   - `src/*`
   - `index.html`
-  - mirror to `ver12/*` when archive sync is required.
+  - `README.md`, `README.zh-TW.md`, `PROJECT_CONTEXT_MERGED.md` for release/handoff updates
+  - mirror to `ver13/*` when archive sync is required.
 - Prefer non-destructive git operations.
 - After each feature completion, update this file section-by-section.
 

@@ -1,0 +1,95 @@
+﻿Mini RTS 單位命名表（v13 參考）
+
+用途：
+- 提供合作夥伴快速對照遊戲內名稱、程式內 id、縮寫與 sprite key 前綴
+
+==============================
+一、單位（Units）
+==============================
+
+1. 伐木工
+- 顯示名稱（中文）：伐木工
+- Internal role id：lumber
+- 常見縮寫：L
+- Sprite key prefix：unit.lumber
+- 說明：採集木材並交付至倉庫/城鎮中心
+
+2. 採礦工
+- 顯示名稱（中文）：採礦工
+- Internal role id：miner
+- 常見縮寫：M
+- Sprite key prefix：unit.miner
+- 說明：採集礦石並交付至倉庫/城鎮中心
+
+3. 獵人
+- 顯示名稱（中文）：獵人
+- Internal role id：hunter
+- 常見縮寫：H
+- Sprite key prefix：unit.hunter
+- 說明：追擊野生動物，擊殺後採集肉並交付
+
+4. 建築工
+- 顯示名稱（中文）：建築工
+- Internal role id：builder
+- 常見縮寫：B
+- Sprite key prefix：unit.builder
+- 說明：前往建築工地施工並完成建築
+
+5. 斥侯
+- 顯示名稱（中文）：斥侯
+- Internal role id：scout
+- 常見縮寫：S
+- Sprite key prefix：unit.scout
+- 說明：探索地圖並擴張視野
+
+==============================
+二、野生動物（Wildlife）
+==============================
+
+- Entity type：animal
+- Sprite key prefix：animal
+- 狀態（state）與 key 前綴：
+  - Wander（徘徊） -> animal.wander.*
+  - Chase（追擊） -> animal.chase.*
+  - Return（返回） -> animal.return.*
+  - Dead（死亡，本體通常不渲染）
+
+==============================
+三、方向命名（4-way）
+==============================
+
+- n = North（上）
+- e = East（右）
+- s = South（下）
+- w = West（左）
+
+範例：
+- unit.hunter.e
+- unit.builder.n
+- animal.chase.w
+
+==============================
+四、建築（協作命名參考）
+==============================
+
+- town_center = 城鎮中心
+- lumberyard = 伐木場
+- mining_site = 採礦場
+- granary = 糧倉
+- transplantation = 轉職公會
+
+==============================
+五、資源（協作命名參考）
+==============================
+
+- tree = 樹木（木材）
+- rock = 礦石
+- meat = 肉
+
+==============================
+六、資產命名備註
+==============================
+
+- Final asset naming conventions are pending.
+- 請以 manifest key 為準，不要在渲染邏輯中寫死檔名。
+- 所有資產 key 都應透過 centralized manifest 做映射。

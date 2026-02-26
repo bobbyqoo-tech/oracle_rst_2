@@ -1,6 +1,6 @@
-# Mini RTS (Browser Simulation)
+﻿# Mini RTS (Browser Simulation)
 
-Current version: `v12.1`
+Current version: `v13.4`
 
 Languages: [English](README.md) | [繁體中文](README.zh-TW.md)
 
@@ -15,82 +15,43 @@ This is a browser-run RTS simulation (no npm/build step required).
 - Open `index.html` with Live Server or GitHub Pages.
 - ES Modules are used (`<script type="module">`).
 
-## Version Changelog (v1-v12.1)
+## Version Summary
 
-### v1 - Lumber MVP
-- Single worker lumber prototype
-- Canvas rendering + basic UI/log
-- Tree click command + A* pathfinding baseline
+### v1-v12.1 (Core systems to render abstraction)
+- Workers/miners/hunters/scouts/builders, wildlife AI, fog, pathfinding, storage/buildings, reclass, tech/age system
+- v12 introduced renderer abstraction (`src/render/`) with pixel/sprite modes
+- v12.1 fixed gatherer congestion and clustered resource generation behavior
 
-### v2 - Lumber MVP (Multi Workers)
-- Multi-worker lumber simulation
-- Parameterized worker/tree counts
-- Expanded UI controls and status panel
+### v13 (24px Sprite Rendering Pipeline)
+- Fixed visual tile size to 24px (grid logic unchanged)
+- Added `assets/sprites/*` and cached sprite asset loader
+- Terrain / obstacles / resources / buildings render via sprites
 
-### v3 - Lumber MVP v2 (Clusters / Obstacles / Diagonals)
-- Tree clusters
-- Obstacles
-- Diagonal movement/pathing improvements
+### v13.1 (Canvas Fit UX)
+- Canvas auto-fits the game pane without shrinking the whole UI
+- Hover/click tile coordinates stay correct under CSS scaling
 
-### v4 - Collision / Mining / Fog / Scout
-- Collision/occupancy
-- Mining system
-- Fog of war
-- Scout auto exploration
-- Manual start flow
+### v13.2 (Unit Sprites, Static 4-way)
+- Added 4-way static sprites for `lumber`, `miner`, `hunter`, `scout`
+- Direction inferred from existing movement/target vectors (no gameplay changes)
 
-### v5 - Performance Rewrite
-- Layered rendering
-- Path queue / budget processing
-- Frontier cache improvements
+### v13.3 (Animal/Builder Sprites + Map Zoom)
+- Added wildlife sprites (`wander/chase/return`, 4-way)
+- Added builder sprites (4-way)
+- Added canvas-only map zoom (UI remains readable)
 
-### v6 - Storage Traffic Improvements
-- Parking / yield near storage
-- Push / soft-resolve anti-jam logic
-
-### v7 - Hunters / Wildlife / HP-Flee (base)
-- Hunter role
-- Wildlife AI
-- HP / flee mechanics (early stage)
-
-### v8 - Builders + Storage Buildings + Placement
-- Builder role
-- Storage buildings (`town_center`, `lumberyard`, `mining_site`, `granary`)
-- Building placement UI and ring logic integration
-
-### v9 - Stability / Resource Redraw / Archive
-- Resource redraw fixes after building
-- Stable resource rendering improvements
-- `ver9/` archive bundle
-
-### v10 - Reclass (Transplantation Guild)
-- Job-change system via `transplantation`
-- Reclass command UI and role switching flow
-- Path state preservation + congestion retry fixes
-
-### v11 - QoL + Build Economy + Spawn Offset
-- Hover coordinate display (no click needed)
-- Building costs + affordability gating
-- Right-bottom spawn offset for future multi-faction expansion
-
-### v12 - Render Abstraction (Stage 1)
-- `src/render/` renderer abstraction layer
-- `render_pixel.js` extracted from existing rendering
-- `render_sprite.js` placeholder shape renderer (no external assets)
-- Single renderer switch in `src/main.js`
-- Game logic/data structures unchanged
-
-### v12.1 - Gatherer Congestion Hotfix
-- Tree/rock generation now grows as more connected cluster blobs
-- Lumber/miner workers retarget when blocked too long on crowded resources
-- Gatherers avoid targets that temporarily have no available stand tile
-- Hotfix applied directly on top of v12 (same `ver12/` archive line)
+### v13.4 (Visual Polish Pass)
+- Damaged-unit HP bars (minimal, above sprite)
+- Foot-based Y depth sorting for sprite-mode drawables
+- Asset manifest / warn-once polish for missing assets
+- Fog edge softening tuned to subtle levels
+- Fixed hidden resource rendering under fog after depth-sorting refactor
 
 ## Archives
 
-Version archives are stored in folders like `ver8/`, `ver9/`, `ver10/`, `ver11/`, `ver12/`.
+Version archives are stored in folders like `ver8/`, `ver9/`, `ver10/`, `ver11/`, `ver12/`, `ver13/`.
 
 ## Notes
 
-- Early version summaries (v1-v7) are reconstructed from archived files and titles.
 - `PROJECT_CONTEXT_MERGED.md` is the main source of truth for current state and handoff details.
+- `ver13/` is the v13-series snapshot archive (sprite pipeline + visual polish stage).

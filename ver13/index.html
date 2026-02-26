@@ -1,0 +1,169 @@
+﻿<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Mini RTS - v13.4 (Visual Polish Pass)</title>
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Arial,"Noto Sans TC",sans-serif;}
+    .wrap{display:grid;grid-template-columns:minmax(0,1fr) 320px 520px;height:100vh;}
+    .gamepane{background:#050505;display:flex;align-items:center;justify-content:center;overflow:auto;min-width:0;}
+    canvas{display:block;background:#111;image-rendering:pixelated;flex:0 0 auto;}
+    .panel{background:#0b0b0b;color:#ddd;padding:12px;overflow:auto;border-left:1px solid #222;}
+    .midpanel{background:#0b0b0b;color:#ddd;padding:12px;overflow:auto;border-left:1px solid #222;}
+    .panel h2{margin:0 0 8px;font-size:16px;}
+    .hint{font-size:12px;color:#aaa;margin:10px 0;line-height:1.45;}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+    .row label{font-size:12px;color:#bbb;display:flex;gap:6px;align-items:center;}
+    .row input{width:96px;background:#0f0f0f;color:#eee;border:1px solid #333;padding:6px 8px;border-radius:6px;}
+    button{background:#222;color:#eee;border:1px solid #333;padding:6px 10px;border-radius:6px;cursor:pointer;}
+    button:hover{background:#2a2a2a;}
+    button:disabled{background:#111;color:#666;border-color:#222;cursor:not-allowed;}
+    .tag{display:inline-block;padding:1px 6px;border:1px solid #333;border-radius:999px;font-size:11px;color:#bbb;}
+    .divider{height:1px;background:#1f1f1f;margin:10px 0;}
+    .kv{font-size:13px;line-height:1.45;}
+    .kv b{color:#fff;}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #333;border-radius:999px;font-size:12px;color:#ddd;margin-right:6px;margin-bottom:6px;}
+    .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;white-space:pre-wrap;background:#070707;border:1px solid #222;padding:8px;border-radius:6px;}
+    .hpall{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:11px;white-space:pre-wrap;background:#090909;border:1px solid #222;padding:8px;border-radius:6px;height:calc(100vh - 120px);overflow:auto;}
+    .small{font-size:12px;color:#aaa;margin:8px 0 6px;}
+    .stats{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;white-space:pre-wrap;background:#0a0a0a;border:1px solid #222;padding:8px;border-radius:6px;}
+    .zoomval{min-width:52px;display:inline-block;color:#ddd;font-size:12px;}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="gamepane">
+    <canvas id="c"></canvas>
+  </div>
+  <div class="midpanel">
+    <h2>單位血量（即時）</h2>
+    <div class="hpall" id="hpAll"></div>
+    <div class="divider"></div>
+    <div class="small">效率/速度（即時）</div>
+    <div class="stats" id="statPanel"></div>
+  </div>
+  <div class="panel">
+    <h2>Mini RTS v13.4：Visual Polish Pass</h2>
+    <div class="hint">
+      玩法：調參數 → 生成地圖 → 開始。點選資源可設定偏好目標。<br/>
+      <b>獵人</b>：追擊野生動物，擊殺後採集肉並回倉庫交付。<br/>
+      <b>野生動物</b>：在家附近徘徊，被攻擊會追擊但不超出 leash。<br/>
+      <b>血量逃跑</b>：工人/獵人 HP < 20% 會逃到倉庫旁安全區。<br/>
+      <b>獵人回血</b>：在 parking ring 每秒回 1 HP，消耗 1 食物；回到 60% HP 繼續工作。
+    </div>
+
+    <div class="row" style="margin:6px 0 8px;">
+      <label>伐木工 <input id="inpLumber" type="number" min="0" max="900" value="10"/></label>
+      <label>採礦工 <input id="inpMiner" type="number" min="0" max="900" value="10"/></label>
+      <label>獵人 <input id="inpHunter" type="number" min="0" max="900" value="10"/></label>
+      <label>斥侯 <input id="inpScout" type="number" min="0" max="200" value="6"/></label>
+      <label>建築工 <input id="inpBuilder" type="number" min="0" max="200" value="2"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>伐木HP <input id="inpHPLumber" type="number" min="1" max="200" value="10"/></label>
+      <label>採礦HP <input id="inpHPMiner" type="number" min="1" max="200" value="10"/></label>
+      <label>獵人HP <input id="inpHPHunter" type="number" min="1" max="200" value="12"/></label>
+      <label>斥侯HP <input id="inpHPScout" type="number" min="1" max="200" value="8"/></label>
+      <label>建築HP <input id="inpHPBuilder" type="number" min="1" max="200" value="10"/></label>
+      <label>動物HP <input id="inpHPAnimal" type="number" min="1" max="200" value="18"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>樹木數量 <input id="inpTrees" type="number" min="0" max="9000" value="500"/></label>
+      <label>礦石數量 <input id="inpRocks" type="number" min="0" max="6000" value="200"/></label>
+      <label>野生動物 <input id="inpAnimals" type="number" min="0" max="3000" value="40"/></label>
+      <label>障礙(%) <input id="inpObs" type="number" min="0" max="40" value="10"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>工人視野 <input id="inpVisW" type="number" min="2" max="24" value="7"/></label>
+      <label>斥侯視野 <input id="inpVisS" type="number" min="4" max="36" value="13"/></label>
+      <label>格像素 <input id="inpTile" type="number" min="24" max="24" value="24"/></label>
+    </div>
+
+    <div class="row" style="margin:0 0 8px;">
+      <label>A* / tick <input id="inpAstarBudget" type="number" min="1" max="80" value="12"/></label>
+      <label>目標抽樣K <input id="inpSampleK" type="number" min="5" max="200" value="45"/></label>
+      <label>Tick Hz <input id="inpHz" type="number" min="5" max="60" value="20"/></label>
+    </div>
+
+    <div class="row" style="margin-bottom:6px;">
+      <button id="gen">生成地圖</button>
+      <button id="start">開始</button>
+      <button id="pause">暫停</button>
+      <button id="step">單步</button>
+      <button id="clearlog">清除訊息</button>
+      <span class="tag" id="statusTag">READY</span>
+    </div>
+    <div class="row" style="margin-bottom:6px;">
+      <label>地圖縮放
+        <input id="zoomRange" type="range" min="25" max="400" step="5" value="100" style="width:180px;"/>
+      </label>
+      <span class="zoomval" id="zoomLabel">100%</span>
+      <button id="zoomReset">重設</button>
+    </div>
+
+    <div class="row" style="margin-bottom:6px;">
+      <label>X <input id="buildX" type="number" min="0" max="99" value="50"/></label>
+      <label>Y <input id="buildY" type="number" min="0" max="99" value="50"/></label>
+      <label>建築
+        <select id="buildType" style="background:#0f0f0f;color:#eee;border:1px solid #333;padding:6px 8px;border-radius:6px;">
+          <option value="lumberyard">伐木場 (木80 礦20)</option>
+          <option value="mining_site">採礦場 (木60 礦50)</option>
+          <option value="granary">糧倉 (木70 礦20 食30)</option>
+          <option value="transplantation">轉職公會 (木140 礦120 食60)</option>
+        </select>
+      </label>
+      <button id="buildBtn">建造</button>
+    </div>
+    <div class="small" id="buildCost"></div>
+    <div class="small">即時座標：<span id="hoverCoordLabel">(--,--)</span></div>
+
+    <div class="row" style="margin-bottom:6px;">
+      <label>轉職單位
+        <input id="reclassWho" type="text" placeholder="H#15 或 15"/>
+      </label>
+      <label>新職業
+        <select id="reclassTo" style="background:#0f0f0f;color:#eee;border:1px solid #333;padding:6px 8px;border-radius:6px;">
+          <option value="lumber">伐木工 (lumber)</option>
+          <option value="miner">採礦工 (miner)</option>
+          <option value="hunter">獵人 (hunter)</option>
+          <option value="builder">建築工 (builder)</option>
+          <option value="scout">斥侯 (scout)</option>
+        </select>
+      </label>
+      <button id="reclassBtn">下達轉職</button>
+    </div>
+    <div class="small">轉職會先前往轉職公會 (transplantation)。輸入格式支援 `H#15` / `M#8` / `B#3` / `S#2` 或純編號 `15`。</div>
+
+    <div class="divider"></div>
+    <h2>科技樹</h2>
+    <div class="row" style="margin-bottom:6px;">
+      <span class="tag" id="ageTag">Ancient</span>
+      <button id="ageUp">升級時代</button>
+      <span class="small" id="ageCost"></span>
+    </div>
+    <div class="small">伐木科技</div>
+    <div class="row" style="margin-bottom:6px;">
+      <button id="techLog">伐木</button><span class="small" id="costLog"></span>
+      <button id="techDoubleAxe">雙面斧</button><span class="small" id="costDoubleAxe"></span>
+      <button id="techBowSaw">弓形鉅</button><span class="small" id="costBowSaw"></span>
+    </div>
+    <div class="small">採礦科技</div>
+    <div class="row" style="margin-bottom:6px;">
+      <button id="techDig">挖掘</button><span class="small" id="costDig"></span>
+      <button id="techBronze">青銅術</button><span class="small" id="costBronze"></span>
+      <button id="techCasting">鑄造技術</button><span class="small" id="costCasting"></span>
+    </div>
+
+    <div class="kv" id="info"></div>
+    <div class="small">事件訊息</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js?v=13.4"></script>
+</body>
+</html>
