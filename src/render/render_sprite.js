@@ -16,6 +16,22 @@ const SPRITE_MANIFEST = {
   "building.mining_site": "assets/sprites/buildings/mining_site.svg",
   "building.granary": "assets/sprites/buildings/granary.svg",
   "building.transplantation": "assets/sprites/buildings/transplantation.svg",
+  "unit.lumber.n": "assets/sprites/units/lumber_n.svg",
+  "unit.lumber.e": "assets/sprites/units/lumber_e.svg",
+  "unit.lumber.s": "assets/sprites/units/lumber_s.svg",
+  "unit.lumber.w": "assets/sprites/units/lumber_w.svg",
+  "unit.miner.n": "assets/sprites/units/miner_n.svg",
+  "unit.miner.e": "assets/sprites/units/miner_e.svg",
+  "unit.miner.s": "assets/sprites/units/miner_s.svg",
+  "unit.miner.w": "assets/sprites/units/miner_w.svg",
+  "unit.hunter.n": "assets/sprites/units/hunter_n.svg",
+  "unit.hunter.e": "assets/sprites/units/hunter_e.svg",
+  "unit.hunter.s": "assets/sprites/units/hunter_s.svg",
+  "unit.hunter.w": "assets/sprites/units/hunter_w.svg",
+  "unit.scout.n": "assets/sprites/units/scout_n.svg",
+  "unit.scout.e": "assets/sprites/units/scout_e.svg",
+  "unit.scout.s": "assets/sprites/units/scout_s.svg",
+  "unit.scout.w": "assets/sprites/units/scout_w.svg",
 };
 
 let spriteAssetsInit = false;
@@ -119,6 +135,57 @@ function drawBuildingSpriteWithFallback(state, b){
   const key = b.built ? buildingKey(b.type) : "building.site";
   if(key && drawAnchoredSprite(ctx, state, key, b.x, b.y, 24, 24)) return true;
   return false;
+}
+
+function getUnitTargetPos(state, u){
+  if(u.path && u.path.length){
+    const ni = u.path[0];
+    return { x:xOf(state, ni), y:yOf(state, ni) };
+  }
+  if(u.target){
+    if((u.target.type==="tree" || u.target.type==="rock" || u.target.type==="meat") && u.target.id!=null){
+      const table = u.target.type==="tree" ? state.trees : (u.target.type==="rock" ? state.rocks : state.meats);
+      const r = table && table[u.target.id];
+      if(r && r.alive) return { x:r.x, y:r.y };
+    }
+    if(u.target.type==="animal" && u.target.id!=null){
+      const a = state.animals && state.animals[u.target.id];
+      if(a && a.state!=="Dead") return { x:a.x, y:a.y };
+    }
+    if(u.target.type==="build" && u.target.id!=null){
+      const b = state.buildings && state.buildings.find((bb)=>bb.id===u.target.id);
+      if(b) return { x:b.x, y:b.y };
+    }
+  }
+  return null;
+}
+
+function facing4FromVector(dx, dy){
+  if(dx===0 && dy===0) return "s";
+  if(Math.abs(dx) >= Math.abs(dy)) return dx>=0 ? "e" : "w";
+  return dy>=0 ? "s" : "n";
+}
+
+function unitSpriteKey(state, u){
+  if(u.role!=="lumber" && u.role!=="miner" && u.role!=="hunter" && u.role!=="scout") return null;
+  const t = getUnitTargetPos(state, u);
+  const dir = t ? facing4FromVector(t.x-u.x, t.y-u.y) : "s";
+  return `unit.${u.role}.${dir}`;
+}
+
+function drawUnitSprite(ctx, state, u){
+  const key = unitSpriteKey(state, u);
+  if(!key) return false;
+  return drawAnchoredSprite(ctx, state, key, u.x, u.y, 24, 32);
+}
+
+function drawUnitPlaceholder(ctx, state, u){
+  const p=tileBox(state, u.x, u.y);
+  ctx.fillStyle="rgba(0,0,0,0.20)";
+  ctx.fillRect(p.px+1, p.py+state.TILEPX-2, Math.max(2,state.TILEPX-2), 1);
+  drawDisc(ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.30), roleColor(u.role), "rgba(15,15,15,0.85)");
+  ctx.fillStyle="rgba(255,255,255,0.30)";
+  ctx.fillRect(p.px+2, p.py+2, Math.max(1,(state.TILEPX/4)|0), 1);
 }
 
 function drawGroundTileSprite(state, x, y){
@@ -272,12 +339,9 @@ function renderSpriteFrame(state){
     if(u.dead) continue;
     const i=idxOf(state, u.x, u.y);
     if(!state.visible[i]) continue;
-    const p=tileBox(state, u.x, u.y);
-    ctx.fillStyle="rgba(0,0,0,0.20)";
-    ctx.fillRect(p.px+1, p.py+state.TILEPX-2, Math.max(2,state.TILEPX-2), 1);
-    drawDisc(ctx, p.cx, p.cy, Math.max(2,state.TILEPX*0.30), roleColor(u.role), "rgba(15,15,15,0.85)");
-    ctx.fillStyle="rgba(255,255,255,0.30)";
-    ctx.fillRect(p.px+2, p.py+2, Math.max(1,(state.TILEPX/4)|0), 1);
+    if(!drawUnitSprite(ctx, state, u)){
+      drawUnitPlaceholder(ctx, state, u);
+    }
 
     const frac=u.hp/u.maxHP;
     if(frac<0.45){

@@ -2,7 +2,7 @@
 
 Last Updated: 2026-02-25  
 Current Main Branch: `main`  
-Current Version Label: `v13`
+Current Version Label: `v13.2`
 
 ## 1) Project Overview
 
@@ -90,6 +90,14 @@ Live run mode:
 - Missing/unloaded assets fall back to placeholder rendering without changing game logic.
 - Static base/resource tile drawing now routes through render abstraction layer dispatch.
 
+### New in v13.2 (Render Stage 3 - Unit Sprites, Static 4-way)
+
+- Replaced unit placeholder rendering (for `lumber`, `miner`, `hunter`, `scout`) with sprite rendering in sprite mode.
+- Direction selection is 4-way (`N/E/S/W`) and derived from existing path/target movement vectors (no animation/state logic changes).
+- Unit sprites use foot-on-ground anchor and may exceed tile height vertically.
+- `builder` units currently keep placeholder fallback rendering.
+- Missing unit sprite assets fall back to existing placeholder unit rendering.
+
 ## 3) Recent Fixes (Critical)
 
 ### Fix A: Reclass path state overwritten
@@ -162,10 +170,15 @@ Commit:
 
 - Sprite renderer using cached `drawImage` assets with placeholder fallbacks.
 - Includes 24px foot-anchor sprite placement for resources/buildings.
+- Added static 4-way unit sprite rendering with direction inference from existing path/target vectors.
 
 ### `src/render/assets.js`
 
 - Cached image loader/manifest helper for sprite rendering (no per-frame `Image()` creation).
+
+### `assets/sprites/units/*`
+
+- Added 4-way static unit sprite set for `lumber`, `miner`, `hunter`, `scout` (`*_n/e/s/w.svg`).
 
 ### `src/world.js`
 

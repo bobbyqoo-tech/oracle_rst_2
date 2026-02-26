@@ -435,7 +435,7 @@ function raf(t){
 
 resizeCanvases();
 state.ctx.fillStyle="#111"; state.ctx.fillRect(0,0,state.canvas.width,state.canvas.height);
-log(`v13：24px sprite render pipeline 已啟用（mode=${RENDER_MODE}）。`);
+log(`v13.2：unit sprite (4-way static) 已啟用（mode=${RENDER_MODE}）。`);
 setStatus("READY");
 updateInfo();
 refreshTechUI();
