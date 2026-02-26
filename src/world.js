@@ -93,7 +93,7 @@ function drawFogSoftEdgeForVisibleTile(i){
   function edgeFade(rectX, rectY, rectW, rectH, x1,y1,x2,y2, a){
     if(a<=0) return;
     const g=state.fogCtx.createLinearGradient(x1,y1,x2,y2);
-    const outer=Math.min(0.32, 0.08 + a*0.22);
+    const outer=Math.min(0.22, 0.04 + a*0.14);
     g.addColorStop(0, `rgba(0,0,0,${outer.toFixed(3)})`);
     g.addColorStop(1, "rgba(0,0,0,0)");
     state.fogCtx.fillStyle=g;
@@ -109,7 +109,7 @@ function drawFogSoftEdgeForVisibleTile(i){
   function cornerFade(cx,cy, a){
     if(a<=0) return;
     const g=state.fogCtx.createRadialGradient(cx,cy,0,cx,cy,c);
-    const outer=Math.min(0.20, 0.05 + a*0.12);
+    const outer=Math.min(0.12, 0.02 + a*0.08);
     g.addColorStop(0, `rgba(0,0,0,${outer.toFixed(3)})`);
     g.addColorStop(1, "rgba(0,0,0,0)");
     state.fogCtx.fillStyle=g;
