@@ -297,3 +297,12 @@ All asset keys must be routed through a manifest for easy remapping.
 - New testing entry URL: `/oracle_rst_2/dev.html`.
 - `dev.html` loads live runtime `src/main.js?v=dev` and should be used for personal WIP/debug validation.
 - Future release workflow: when a new version is finalized, archive it (e.g. `ver14/`) and repoint root `index.html` to that archived version.
+
+## 10) 2026-02-26 WIP Feature Note (Saber + Enemy Camp)
+
+- Added friendly combat unit key `saber` (UI label: `戰士`) with configurable initial count before map generation.
+- Added enemy camp marker at top-left area as spawn origin only (no HP / non-attackable gameplay object).
+- Added `生成敵人` button to spawn one enemy `raider` (`步兵`) near enemy camp per click.
+- Added basic `saber` vs `raider` melee combat loop in `src/sim.js`.
+- Raider behavior: 0.5x move speed, attacks units only, leash return to enemy camp.
+- Rendering fallback visuals added for enemy camp / new unit colors in pixel+sprite placeholder paths.

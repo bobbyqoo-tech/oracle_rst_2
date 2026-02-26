@@ -12,6 +12,18 @@ function renderPixelFrame(state){
   state.ctx.clearRect(0,0,state.canvas.width,state.canvas.height);
   state.ctx.drawImage(state.baseLayer,0,0);
 
+  if(state.enemyCamp){
+    const cx=state.enemyCamp.x, cy=state.enemyCamp.y;
+    const ci=idxOf(state,cx,cy);
+    if(state.explored && state.explored[ci]){
+      state.ctx.fillStyle="rgb(170,60,60)";
+      state.ctx.fillRect(cx*state.TILEPX, cy*state.TILEPX, state.TILEPX, state.TILEPX);
+      state.ctx.strokeStyle="rgba(255,230,180,0.9)";
+      state.ctx.lineWidth=1;
+      state.ctx.strokeRect(cx*state.TILEPX+0.5, cy*state.TILEPX+0.5, state.TILEPX-1, state.TILEPX-1);
+    }
+  }
+
   for(const id of state.knownTreeIds){
     const t=state.trees[id];
     if(!t || !t.alive) continue;
@@ -55,6 +67,8 @@ function renderPixelFrame(state){
     else if(u.role==="miner") state.ctx.fillStyle="rgb(200,120,255)";
     else if(u.role==="hunter") state.ctx.fillStyle="rgb(100,220,160)";
     else if(u.role==="builder") state.ctx.fillStyle="rgb(200,200,90)";
+    else if(u.role==="saber") state.ctx.fillStyle="rgb(120,220,255)";
+    else if(u.role==="raider") state.ctx.fillStyle="rgb(235,95,95)";
     else state.ctx.fillStyle="rgb(255,170,70)";
     state.ctx.fillRect(u.x*state.TILEPX,u.y*state.TILEPX,state.TILEPX,state.TILEPX);
 

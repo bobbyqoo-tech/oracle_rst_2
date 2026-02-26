@@ -36,6 +36,14 @@ const SPRITE_MANIFEST = {
   "unit.builder.e": "assets/sprites/units/builder_e.svg",
   "unit.builder.s": "assets/sprites/units/builder_s.svg",
   "unit.builder.w": "assets/sprites/units/builder_w.svg",
+  "unit.saber.n": "assets/sprites/units/saber_n.svg",
+  "unit.saber.e": "assets/sprites/units/saber_e.svg",
+  "unit.saber.s": "assets/sprites/units/saber_s.svg",
+  "unit.saber.w": "assets/sprites/units/saber_w.svg",
+  "unit.raider.n": "assets/sprites/units/raider_n.svg",
+  "unit.raider.e": "assets/sprites/units/raider_e.svg",
+  "unit.raider.s": "assets/sprites/units/raider_s.svg",
+  "unit.raider.w": "assets/sprites/units/raider_w.svg",
   "animal.wander.n": "assets/sprites/animals/wander_n.svg",
   "animal.wander.e": "assets/sprites/animals/wander_e.svg",
   "animal.wander.s": "assets/sprites/animals/wander_s.svg",
@@ -63,6 +71,8 @@ function roleColor(role){
   if(role==="miner") return "rgb(190,130,255)";
   if(role==="hunter") return "rgb(90,230,170)";
   if(role==="builder") return "rgb(230,210,90)";
+  if(role==="saber") return "rgb(120,220,255)";
+  if(role==="raider") return "rgb(235,95,95)";
   return "rgb(255,170,70)";
 }
 
@@ -173,6 +183,10 @@ function getUnitTargetPos(state, u){
       const a = state.animals && state.animals[u.target.id];
       if(a && a.state!=="Dead") return { x:a.x, y:a.y };
     }
+    if(u.target.type==="unit" && u.target.id!=null){
+      const v = state.units && state.units[u.target.id];
+      if(v && !v.dead) return { x:v.x, y:v.y };
+    }
     if(u.target.type==="build" && u.target.id!=null){
       const b = state.buildings && state.buildings.find((bb)=>bb.id===u.target.id);
       if(b) return { x:b.x, y:b.y };
@@ -193,7 +207,7 @@ function inferFacing4(state, x, y, target){
 }
 
 function unitSpriteKey(state, u){
-  if(u.role!=="lumber" && u.role!=="miner" && u.role!=="hunter" && u.role!=="scout" && u.role!=="builder") return null;
+  if(u.role!=="lumber" && u.role!=="miner" && u.role!=="hunter" && u.role!=="scout" && u.role!=="builder" && u.role!=="saber" && u.role!=="raider") return null;
   const t = getUnitTargetPos(state, u);
   const dir = inferFacing4(state, u.x, u.y, t);
   return `unit.${u.role}.${dir}`;
@@ -365,6 +379,29 @@ function addBuildingDrawables(state, list){
     });
   }
 }
+function addEnemyCampDrawable(state, list){
+  if(!state.enemyCamp) return;
+  const { x, y } = state.enemyCamp;
+  const i=idxOf(state,x,y);
+  if(!state.explored || !state.explored[i]) return;
+  const footX=x*state.TILEPX + state.TILEPX/2;
+  const footY=y*state.TILEPX + state.TILEPX/2;
+  pushDrawable(list, footY, footX, 15, ()=>{
+    const p=tileBox(state, x, y);
+    state.ctx.fillStyle="rgba(70,10,10,0.35)";
+    state.ctx.fillRect(p.px+1, p.py+1, state.TILEPX-2, state.TILEPX-2);
+    state.ctx.fillStyle="rgb(180,70,70)";
+    state.ctx.beginPath();
+    state.ctx.moveTo(p.cx, p.py+2);
+    state.ctx.lineTo(p.px+state.TILEPX-2, p.py+state.TILEPX-3);
+    state.ctx.lineTo(p.px+2, p.py+state.TILEPX-3);
+    state.ctx.closePath();
+    state.ctx.fill();
+    state.ctx.strokeStyle="rgba(255,230,180,0.9)";
+    state.ctx.lineWidth=1;
+    state.ctx.strokeRect(p.px+0.5, p.py+0.5, state.TILEPX-1, state.TILEPX-1);
+  });
+}
 function addResourceDrawables(state, list){
   for(const id of state.knownTreeIds){
     const t=state.trees[id];
@@ -461,6 +498,7 @@ function renderSpriteFrame(state){
   ctx.drawImage(state.baseLayer,0,0);
   const drawables=[];
   addBuildingDrawables(state, drawables);
+  addEnemyCampDrawable(state, drawables);
   addResourceDrawables(state, drawables);
   addAnimalDrawables(state, drawables);
   addUnitDrawables(state, drawables);

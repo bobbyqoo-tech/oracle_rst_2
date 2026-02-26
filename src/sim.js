@@ -22,6 +22,8 @@ function roleAbbr(role){
   if(role==="hunter") return "H";
   if(role==="scout") return "S";
   if(role==="builder") return "B";
+  if(role==="saber") return "Z";
+  if(role==="raider") return "R";
   return "U";
 }
 function hpBar(hp,max, w=12){
@@ -72,6 +74,8 @@ function roleLabel(role){
   if(role==="hunter") return "獵人";
   if(role==="builder") return "建築工";
   if(role==="scout") return "斥侯";
+  if(role==="saber") return "戰士";
+  if(role==="raider") return "步兵";
   return role;
 }
 function removeFromArray(arr, item){
@@ -232,7 +236,7 @@ function updateInfo(){
       <div style="margin-top:8px;"><b>倉庫</b>：木=<b>${state.storage.wood}</b>　礦=<b>${state.storage.ore}</b>　食物=<b>${state.storage.food}</b></div>
       <div><b>資源</b>：樹<b>${aliveTrees}</b> / ${state.trees?state.trees.length:0}　礦<b>${aliveRocks}</b> / ${state.rocks?state.rocks.length:0}　肉<b>${aliveMeats}</b></div>
       <div><b>動物</b>：存活<b>${aliveAnimals}</b> / ${state.animals?state.animals.length:0}</div>
-      <div><b>單位</b>：總數 ${state.units?state.units.length:0}　工人/獵人/建築工 ${state.workers?state.workers.length:0}　斥侯 ${state.scouts?state.scouts.length:0}</div>
+      <div><b>單位</b>：總數 ${state.units?state.units.length:0}　工人/獵人/建築工 ${state.workers?state.workers.length:0}　斥侯 ${state.scouts?state.scouts.length:0}　戰士 ${state.sabers?state.sabers.filter(u=>!u.dead).length:0}　敵步兵 ${state.raiders?state.raiders.filter(u=>!u.dead).length:0}</div>
       <div><b>參數</b>：tick ${state.TICK_HZ}Hz　抽樣K=${state.SAMPLE_K}　格像素=${state.TILEPX}px　逃跑<20%</div>
       <div><b>時代</b>：${state.constants.AGES[state.ageIndex]}　<b>伐木效率</b> x${state.chopRate.toFixed(2)}　<b>採礦效率</b> x${state.mineRate.toFixed(2)}</div>
     </div>
@@ -264,6 +268,8 @@ function updateInfo(){
       `採礦工移速: ${workerMove.toFixed(1)} 格/秒`,
       `獵人移速: ${hunterMove.toFixed(1)} 格/秒`,
       `斥侯移速: ${scoutMove.toFixed(1)} 格/秒`,
+      `戰士(Saber)移速: ${workerMove.toFixed(1)} 格/秒`,
+      `步兵(敵)移速: ${(workerMove*0.5).toFixed(1)} 格/秒`,
       `野生動物移速: ${animalMove} 格/秒`,
     ];
     state.dom.statsEl.textContent = lines.join("\n");
@@ -630,6 +636,150 @@ function tryYieldOrPush(u, nextI){
     }
   }
   return false;
+}
+
+function isCombatUnit(u){
+  return !!u && (u.role==="saber" || u.role==="raider");
+}
+function isAliveCombatTarget(u, targetId){
+  if(targetId==null || targetId<0) return null;
+  const t=state.units[targetId];
+  if(!t || t.dead) return null;
+  if(t.id===u.id) return null;
+  if(u.role==="saber" && t.role!=="raider") return null;
+  if(u.role==="raider" && t.role==="raider") return null;
+  return t;
+}
+function nearestEnemyUnitFor(u){
+  let best=null, bestD=1e9;
+  for(const t of state.units){
+    if(!t || t.dead || t.id===u.id) continue;
+    if(u.role==="saber" && t.role!=="raider") continue;
+    if(u.role==="raider" && t.role==="raider") continue;
+    const d=cheb(u.x,u.y,t.x,t.y);
+    if(u.role==="raider" && u.leashRange>0){
+      if(cheb(t.x,t.y,u.homeX,u.homeY) > u.leashRange) continue;
+    }
+    if(d<bestD){ bestD=d; best=t; }
+  }
+  return best;
+}
+function requestMoveToUnitMelee(u, target){
+  if(!u || !target || target.dead) return false;
+  if(cheb(u.x,u.y,target.x,target.y)<=u.combatRange && !(u.x===target.x && u.y===target.y)) return true;
+  const stand=chooseBestStandTile(u, idx(target.x,target.y));
+  if(stand===-1) return false;
+  u.target={type:"unit", id:target.id};
+  u.intent=null;
+  requestPath(u.id, stand);
+  return true;
+}
+function requestReturnToHome(u){
+  if(u.homeX==null || u.homeY==null) return false;
+  const goal=idx(u.homeX, u.homeY);
+  u.target=null;
+  u.combatTargetId=-1;
+  u.intent=null;
+  requestPath(u.id, goal);
+  u.state="Return";
+  return true;
+}
+function decCombatCooldowns(u){
+  if(u.atkCDTicks>0) u.atkCDTicks--;
+  if(u.moveCDTicks>0) u.moveCDTicks--;
+}
+function combatTryMove(u){
+  if(u.moveIntervalTicks>1 && u.moveCDTicks>0) return null;
+  const moved=tryStepFromPath(u);
+  if(moved){
+    const interval=Math.max(1, u.moveIntervalTicks||1);
+    u.moveCDTicks = interval>1 ? (interval-1) : 0;
+  }
+  return moved;
+}
+function attackUnitTarget(attacker, target){
+  if(attacker.atkCDTicks>0) return false;
+  attacker.atkCDTicks = Math.max(1, attacker.attackCooldownTicks||30);
+  dealDamageUnit(target, attacker.combatDamage||1, null);
+  return true;
+}
+function tickCombatUnit(u){
+  if(!u || u.dead || !isCombatUnit(u)) return;
+  if(u.waitingPath) return;
+  decCombatCooldowns(u);
+
+  if(u.role==="raider" && u.leashRange>0){
+    const outOfLeash = cheb(u.x,u.y,u.homeX,u.homeY) > u.leashRange;
+    const curTarget = isAliveCombatTarget(u, u.combatTargetId);
+    if(outOfLeash && (!curTarget || cheb(u.x,u.y,curTarget.x,curTarget.y)>u.combatRange)){
+      requestReturnToHome(u);
+    }
+  }
+
+  let target = isAliveCombatTarget(u, u.combatTargetId);
+  if(target && u.role==="raider" && u.leashRange>0 && cheb(target.x,target.y,u.homeX,u.homeY)>u.leashRange){
+    target=null;
+    u.combatTargetId=-1;
+    u.target=null;
+  }
+  if(!target){
+    target = nearestEnemyUnitFor(u);
+    u.combatTargetId = target ? target.id : -1;
+    if(target) u.target = { type:"unit", id:target.id };
+  }
+
+  if(!target){
+    if(u.role==="raider"){
+      if(cheb(u.x,u.y,u.homeX,u.homeY)>0){
+        if((!u.path || !u.path.length) && !u.waitingPath) requestReturnToHome(u);
+        if(u.state==="Move" || u.state==="Return"){
+          const moved=combatTryMove(u);
+          if(moved===null) return;
+          if(!moved){
+            if(u.path && u.path.length) u.stuckTicks++;
+            if(u.stuckTicks>16 && u.path && u.path.length) requestPath(u.id, u.path[u.path.length-1]);
+          }
+          if(!u.path || !u.path.length) u.state="Idle";
+        } else {
+          u.state="Idle";
+        }
+      } else {
+        u.state="Idle";
+      }
+    } else {
+      u.state="Idle";
+      u.path=[];
+    }
+    return;
+  }
+
+  if(cheb(u.x,u.y,target.x,target.y)<= (u.combatRange||1) && !(u.x===target.x && u.y===target.y)){
+    u.state="Fight";
+    u.path=[];
+    attackUnitTarget(u, target);
+    return;
+  }
+
+  const needsRepath = (!u.path || !u.path.length || (state.tickCount % 8)===0);
+  if(needsRepath) requestMoveToUnitMelee(u, target);
+  u.state="Move";
+  const moved=combatTryMove(u);
+  if(moved===null) return;
+  if(!moved){
+    if(u.path && u.path.length){
+      u.stuckTicks++;
+      if(u.stuckTicks>state.constants.PUSH_STUCK_TICKS && tryYieldOrPush(u, u.path[0])) return;
+      if(u.stuckTicks>16){
+        u.stuckTicks=0;
+        requestPath(u.id, u.path[u.path.length-1]);
+      }
+    }
+    return;
+  }
+  if(!u.path.length && cheb(u.x,u.y,target.x,target.y)<= (u.combatRange||1)){
+    u.state="Fight";
+    attackUnitTarget(u, target);
+  }
 }
 
 function tickBuilder(u){
@@ -1149,8 +1299,9 @@ function dealDamageAnimal(a, dmg){
 
 function anyAlive(list){ for(const r of list) if(r.alive) return true; return false; }
 function anyAnimalAlive(){ for(const a of state.animals) if(a.state!=="Dead") return true; return false; }
+function anyRaiderAlive(){ for(const u of (state.raiders||[])) if(u && !u.dead) return true; return false; }
 function allDone(){
-  if(anyAlive(state.trees) || anyAlive(state.rocks) || anyAlive(state.meats) || anyAnimalAlive()) return false;
+  if(anyAlive(state.trees) || anyAlive(state.rocks) || anyAlive(state.meats) || anyAnimalAlive() || anyRaiderAlive()) return false;
   for(const u of state.workers){
     if(u.dead) continue;
     if(u.carry>0) return false;
@@ -1166,6 +1317,8 @@ function tick(){
 
   for(const a of state.animals) tickAnimal(a);
   for(const s of state.scouts) tickScout(s);
+  for(const z of (state.sabers||[])) tickCombatUnit(z);
+  for(const r of (state.raiders||[])) tickCombatUnit(r);
   for(const w of state.workers){
     if(w.role==="builder") tickBuilder(w);
     else tickWorker(w);

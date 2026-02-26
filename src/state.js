@@ -24,6 +24,8 @@ export const state = {
   HP_SCOUT: constants.DEFAULT_HP_SCOUT,
   ANIMAL_HP: constants.DEFAULT_ANIMAL_HP,
   HP_BUILDER: constants.DEFAULT_HP_BUILDER,
+  HP_SABER: 10,
+  HP_RAIDER: 6,
   chopRate: constants.CHOP_RATE,
   mineRate: constants.MINE_RATE,
 
@@ -63,7 +65,10 @@ export const state = {
   units: [],
   workers: [],
   scouts: [],
+  sabers: [],
+  raiders: [],
   preferred: { type: null, id: null },
+  enemyCamp: null,
 
   dropTiles: [],
   parkTiles: [],

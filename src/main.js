@@ -1,5 +1,5 @@
 ﻿import { state } from "./state.js";
-import { generate, resizeCanvases, updateVisibilityAndFogLayers, addBuilding, drawBaseAll, redrawDiscoveredResources } from "./world.js";
+import { generate, resizeCanvases, updateVisibilityAndFogLayers, addBuilding, drawBaseAll, redrawDiscoveredResources, spawnRaiderNearEnemyCamp } from "./world.js";
 import { initAstarArrays } from "./pathfinding.js";
 import { log, updateInfo, tick, render, setStatus } from "./sim.js";
 import { setRendererMode, primeRendererAssets } from "./render/renderer.js";
@@ -41,6 +41,7 @@ const inpMiner=document.getElementById("inpMiner");
 const inpHunter=document.getElementById("inpHunter");
 const inpScout=document.getElementById("inpScout");
 const inpBuilder=document.getElementById("inpBuilder");
+const inpSaber=document.getElementById("inpSaber");
 const inpHPLumber=document.getElementById("inpHPLumber");
 const inpHPMiner=document.getElementById("inpHPMiner");
 const inpHPHunter=document.getElementById("inpHPHunter");
@@ -63,6 +64,7 @@ const btnStart=document.getElementById("start");
 const btnPause=document.getElementById("pause");
 const btnStep=document.getElementById("step");
 const btnClear=document.getElementById("clearlog");
+const btnSpawnEnemy=document.getElementById("spawnEnemy");
 const inpBuildX=document.getElementById("buildX");
 const inpBuildY=document.getElementById("buildY");
 const selBuildType=document.getElementById("buildType");
@@ -123,6 +125,8 @@ function roleNameZh(role){
   if(role==="hunter") return "獵人";
   if(role==="builder") return "建築工";
   if(role==="scout") return "斥侯";
+  if(role==="saber") return "戰士";
+  if(role==="raider") return "步兵";
   return role;
 }
 function rolePrefixToRole(p){
@@ -343,6 +347,7 @@ function readParams(){
     hunterCount: clampInt(inpHunter.value,0,900,10),
     scoutCount: clampInt(inpScout.value,0,200,6),
     builderCount: clampInt(inpBuilder.value,0,200,2),
+    saberCount: clampInt(inpSaber.value,0,300,4),
     hpLumber: clampInt(inpHPLumber.value,1,200,10),
     hpMiner: clampInt(inpHPMiner.value,1,200,10),
     hpHunter: clampInt(inpHPHunter.value,1,200,12),
@@ -364,7 +369,7 @@ function readParams(){
 
 btnGen.onclick=()=>{
   const p=readParams();
-  inpLumber.value=p.lumberCount; inpMiner.value=p.minerCount; inpHunter.value=p.hunterCount; inpScout.value=p.scoutCount; inpBuilder.value=p.builderCount;
+  inpLumber.value=p.lumberCount; inpMiner.value=p.minerCount; inpHunter.value=p.hunterCount; inpScout.value=p.scoutCount; inpBuilder.value=p.builderCount; inpSaber.value=p.saberCount;
   inpHPLumber.value=p.hpLumber; inpHPMiner.value=p.hpMiner; inpHPHunter.value=p.hpHunter; inpHPScout.value=p.hpScout; inpHPBuilder.value=p.hpBuilder; inpHPAnimal.value=p.hpAnimal;
   inpTrees.value=p.treeCount; inpRocks.value=p.rockCount; inpAnimals.value=p.animalCount; inpObs.value=p.obsPercent;
   inpVisW.value=p.visionWorker; inpVisS.value=p.visionScout; inpTile.value=p.tilePx;
@@ -374,7 +379,7 @@ btnGen.onclick=()=>{
   updateCanvasZoom();
   initAstarArrays();
   setStatus("READY");
-  log(`生成完成：工人(含獵人)=${state.workers.length} 斥侯=${state.scouts.length} 動物=${state.animals.length}`);
+  log(`生成完成：工人(含獵人/建築工)=${state.workers.length} 斥侯=${state.scouts.length} 戰士=${state.sabers.length} 動物=${state.animals.length}`);
   updateInfo();
   refreshTechUI();
   refreshBuildUI();
@@ -404,6 +409,20 @@ btnStep.onclick=()=>{
   tick();
   state.simState=prev; setStatus(prev);
 };
+
+if(btnSpawnEnemy){
+  btnSpawnEnemy.onclick=()=>{
+    if(!state.grid){ log("請先按「生成地圖」。"); return; }
+    const res=spawnRaiderNearEnemyCamp();
+    if(!res.ok){
+      log(`生成敵人失敗：${res.reason==="no_space" ? "敵營附近沒有可用空位" : "尚未生成地圖"}`);
+      return;
+    }
+    log(`敵人生成：步兵#${res.id} @(${res.x},${res.y})`);
+    updateInfo();
+    render();
+  };
+}
 
 canvas.addEventListener("click",(ev)=>{
   if(!state.grid) return;

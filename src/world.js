@@ -187,6 +187,8 @@ function redrawDiscoveredResources(){
 function updateVisibilityAndFogLayers(){
   state.visible.fill(0);
   for(const u of state.units){
+    if(!u || u.dead) continue;
+    if(u.team==="enemy" || u.role==="raider") continue;
     const offsets = (u.role==="scout") ? state.visOffsetsScout : state.visOffsetsWorker;
     const ux=u.x, uy=u.y;
     for(const o of offsets){
@@ -352,12 +354,16 @@ function roleMaxHP(role){
   if(role==="hunter") return state.HP_HUNTER;
   if(role==="scout") return state.HP_SCOUT;
   if(role==="builder") return state.HP_BUILDER;
+  if(role==="saber") return state.HP_SABER;
+  if(role==="raider") return state.HP_RAIDER;
   return 10;
 }
 function isWorkerRole(role){ return role==="lumber"||role==="miner"||role==="hunter"||role==="builder"; }
 
 function makeUnit(id,role,x,y){
   const maxHP=roleMaxHP(role);
+  const isSaber = role==="saber";
+  const isRaider = role==="raider";
   return {
     id, role, x, y,
     state:"Idle",
@@ -389,6 +395,17 @@ function makeUnit(id,role,x,y){
     reclassFromRole:null,
     reclassBuildingId:-1,
     reclassStarted:false,
+    team: isRaider ? "enemy" : "friendly",
+    combatDamage: (isSaber || isRaider) ? 1 : 0,
+    combatRange: (isSaber || isRaider) ? 1 : 0,
+    attackCooldownTicks: (isSaber || isRaider) ? 30 : 0,
+    atkCDTicks: 0,
+    moveIntervalTicks: isRaider ? 2 : 1,
+    moveCDTicks: 0,
+    homeX: x,
+    homeY: y,
+    leashRange: isRaider ? 10 : 0,
+    combatTargetId: -1,
   };
 }
 
@@ -564,6 +581,8 @@ function generate(params){
   state.HP_HUNTER=params.hpHunter;
   state.HP_SCOUT=params.hpScout;
   state.HP_BUILDER=params.hpBuilder;
+  state.HP_SABER=10;
+  state.HP_RAIDER=6;
   state.ANIMAL_HP=params.hpAnimal;
   state.chopRate=state.constants.CHOP_RATE;
   state.mineRate=state.constants.MINE_RATE;
@@ -586,12 +605,13 @@ function generate(params){
 
   state.trees=[]; state.rocks=[]; state.meats=[];
   state.animals=[];
-  state.units=[]; state.workers=[]; state.scouts=[];
+  state.units=[]; state.workers=[]; state.scouts=[]; state.sabers=[]; state.raiders=[];
   state.preferred={type:null,id:null};
   const spawnPad=10;
   const centerX=Math.max(spawnPad, Math.min(W-1-spawnPad, Math.floor(W*0.65)));
   const centerY=Math.max(spawnPad, Math.min(H-1-spawnPad, Math.floor(H*0.65)));
   state.storage={x:centerX, y:centerY, wood:0, ore:0, food:0};
+  state.enemyCamp={ x:2, y:2, leashRange:10 };
   state.buildings=[];
   state.buildingAt=new Int32Array(N); state.buildingAt.fill(-1);
   const town={id:0,type:"town_center",x:centerX,y:centerY,dropTiles:[],parkTiles:[],built:true,progress:1};
@@ -609,8 +629,16 @@ function generate(params){
       state.grid[i] = (x===centerX && y===centerY) ? state.constants.Tile.Storage : state.constants.Tile.Empty;
     }
   }
+  for(let y=0;y<=5;y++){
+    for(let x=0;x<=5;x++){
+      if(!inBounds(x,y)) continue;
+      const i=idx(x,y);
+      if(state.grid[i]!==state.constants.Tile.Storage) state.grid[i]=state.constants.Tile.Empty;
+    }
+  }
 
   const occ=new Set([`${centerX},${centerY}`]);
+  occ.add(`${state.enemyCamp.x},${state.enemyCamp.y}`);
   function spawnRole(n,role){
     let created=0;
     for(let ring=1; created<n && ring<60; ring++){
@@ -626,7 +654,10 @@ function generate(params){
           const id=state.units.length;
           const u=makeUnit(id,role,x,y);
           state.units.push(u);
-          if(role==="scout") state.scouts.push(u); else state.workers.push(u);
+          if(role==="scout") state.scouts.push(u);
+          else if(role==="saber") state.sabers.push(u);
+          else if(role==="raider") state.raiders.push(u);
+          else state.workers.push(u);
           occ.add(k);
           created++;
         }
@@ -637,7 +668,10 @@ function generate(params){
       const id=state.units.length;
       const u=makeUnit(id,role,x,y);
       state.units.push(u);
-      if(role==="scout") state.scouts.push(u); else state.workers.push(u);
+      if(role==="scout") state.scouts.push(u);
+      else if(role==="saber") state.sabers.push(u);
+      else if(role==="raider") state.raiders.push(u);
+      else state.workers.push(u);
       created++;
     }
   }
@@ -647,6 +681,7 @@ function generate(params){
   spawnRole(params.hunterCount,"hunter");
   spawnRole(params.scoutCount,"scout");
   spawnRole(params.builderCount,"builder");
+  spawnRole(params.saberCount||0,"saber");
 
   rebuildOccupancy();
 
@@ -687,6 +722,39 @@ function generate(params){
   state.simState="READY";
 }
 
+function findSpawnTileNear(x, y){
+  for(let ring=1; ring<=8; ring++){
+    for(let dy=-ring; dy<=ring; dy++){
+      for(let dx=-ring; dx<=ring; dx++){
+        if(Math.abs(dx)!==ring && Math.abs(dy)!==ring) continue;
+        const nx=x+dx, ny=y+dy;
+        if(!inBounds(nx,ny)) continue;
+        const ni=idx(nx,ny);
+        if(!isWalkableTile(ni)) continue;
+        if(state.occupied[ni]!==-1) continue;
+        if(state.animalAt && state.animalAt[ni]!==-1) continue;
+        return { x:nx, y:ny };
+      }
+    }
+  }
+  return null;
+}
+
+function spawnRaiderNearEnemyCamp(){
+  if(!state.grid || !state.enemyCamp) return { ok:false, reason:"no_world" };
+  const p=findSpawnTileNear(state.enemyCamp.x, state.enemyCamp.y);
+  if(!p) return { ok:false, reason:"no_space" };
+  const id=state.units.length;
+  const u=makeUnit(id,"raider",p.x,p.y);
+  u.homeX = state.enemyCamp.x;
+  u.homeY = state.enemyCamp.y;
+  u.leashRange = state.enemyCamp.leashRange || 10;
+  state.units.push(u);
+  state.raiders.push(u);
+  state.occupied[idx(p.x,p.y)] = u.id;
+  return { ok:true, id:u.id, x:p.x, y:p.y };
+}
+
 export {
   idx, xOf, yOf, inBounds, manhattan, cheb,
   distToBuilding, isAdjacentToBuilding, distToNearestBuilding, buildingAt,
@@ -698,6 +766,7 @@ export {
   buildRings, reserveTileFromList, releaseReservation, ensureDropReservation, ensureParkReservation, pickFreeTileFromList,
   canPlaceBuilding, addBuilding,
   roleMaxHP, isWorkerRole, makeUnit, makeAnimal,
+  spawnRaiderNearEnemyCamp,
   addObstaclePatches, spawnClusteredPoints, spawnSeparatedPoints,
   generate,
 };
