@@ -17,6 +17,10 @@ This is a browser-run RTS simulation (no npm/build step required).
 
 ## Version Timeline (Newest -> Oldest)
 
+### v14.1 - Saber Standby Fix
+- Friendly `saber` units now return to tiles adjacent to the town center when no enemy is detected
+- Goal: keep idle combat units staged near the base instead of remaining where the last fight ended
+
 ### v14 - Combat Frontier Release (`Call to Arms / 號角響起`)
 - Added friendly melee unit `saber` (`戰士`) with configurable initial count
 - Added enemy camp spawn origin at the top-left of the map
