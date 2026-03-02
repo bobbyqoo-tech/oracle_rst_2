@@ -312,3 +312,24 @@ All asset keys must be routed through a manifest for easy remapping.
 - Added GitHub Actions workflow `.github/workflows/deploy-pages.yml`.
 - Intended use: deploy GitHub Pages from current `main` contents when branch-based Pages publishing stops updating reliably.
 - Expected follow-up in GitHub UI: Pages source should switch from branch deploy to GitHub Actions after workflow is detected/run.
+
+## 12) 2026-03-02 v14 Archive Release Note
+
+Release label:
+- `v14` (`Iron Frontier / 鐵鋒前線`)
+
+Release scope:
+- Added friendly melee unit `saber` (`戰士`) with configurable initial count.
+- Added top-left enemy camp as raider spawn origin.
+- Added `生成敵人` button to spawn enemy `raider` (`步兵`) units.
+- Added basic melee combat loop between `saber` and `raider`.
+- Added raider leash-return behavior and 0.5x move speed.
+- Added 4-way sprite assets for `saber` and `raider`.
+
+Archive / routing:
+- Created `ver14/` snapshot containing `src/`, `assets/`, `index.html`, `index_single.html`.
+- Root public `index.html` now points to `ver14/src/main.js?v=14.0`.
+- `dev.html` remains the live WIP/testing entry.
+
+Codename:
+- `Iron Frontier / 鐵鋒前線`

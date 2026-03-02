@@ -1,6 +1,6 @@
 ﻿# Mini RTS（瀏覽器 RTS 模擬）
 
-目前版本：`v13.4`（`The first light / 初見之光`）
+目前版本：`v14`（`Iron Frontier / 鐵鋒前線`）
 
 語言： [English](README.md) | [繁體中文](README.zh-TW.md)
 
@@ -16,6 +16,14 @@
 - 專案使用 ES Modules（`<script type="module">`）
 
 ## 版本時間線（新 -> 舊）
+
+### v14（戰鬥前線版本，`Iron Frontier / 鐵鋒前線`）
+- 新增友方近戰單位 `saber`（顯示為 `戰士`），可在生成前設定初始數量
+- 新增地圖左上角敵營，作為敵方出生點
+- 新增 `生成敵人` 按鈕，每次生成 1 名敵方 `raider`（顯示為 `步兵`）
+- 新增 `raider` 行為：只攻擊單位、半速移動、超出 leash 後返營
+- 新增 `saber` 與 `raider` 的 4 向 sprite
+- 已封存為 `ver14/`，並將公開 root demo 切換到 `ver14`
 
 ### v13.4（視覺拋光階段，`The first light / 初見之光`）
 - 新增受傷單位專用 HP Bar（小型、顯示於 sprite 上方）
@@ -114,9 +122,10 @@
 
 ## 封存版本
 
-版本封存資料夾包含：`ver8/`, `ver9/`, `ver10/`, `ver11/`, `ver12/`, `ver13/`
+版本封存資料夾包含：`ver8/`, `ver9/`, `ver10/`, `ver11/`, `ver12/`, `ver13/`, `ver14/`
 
 ## 備註
 
 - `PROJECT_CONTEXT_MERGED.md` 是目前階段與交接的主要來源
 - `ver13/` 是 v13 系列封存快照，代號：`The first light / 初見之光`
+- `ver14/` 是 v14 戰鬥版本封存快照，代號：`Iron Frontier / 鐵鋒前線`

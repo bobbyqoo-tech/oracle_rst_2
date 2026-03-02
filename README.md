@@ -1,6 +1,6 @@
 ﻿# Mini RTS (Browser Simulation)
 
-Current version: `v13.4` (`The first light`)
+Current version: `v14` (`Iron Frontier / 鐵鋒前線`)
 
 Languages: [English](README.md) | [繁體中文](README.zh-TW.md)
 
@@ -16,6 +16,14 @@ This is a browser-run RTS simulation (no npm/build step required).
 - ES Modules are used (`<script type="module">`).
 
 ## Version Timeline (Newest -> Oldest)
+
+### v14 - Combat Frontier Release (`Iron Frontier / 鐵鋒前線`)
+- Added friendly melee unit `saber` (`戰士`) with configurable initial count
+- Added enemy camp spawn origin at the top-left of the map
+- Added `生成敵人` button to spawn one enemy `raider` (`步兵`) near the enemy camp
+- Added `raider` combat behavior: unit-only attacks, half move speed, leash return to camp
+- Added 4-way sprite set for `saber` and `raider`
+- Archived the release as `ver14/` and switched the public root demo to load `ver14`
 
 ### v13.4 - Visual Polish Pass (`The first light / 初見之光`)
 - Added minimal HP bars for damaged units only (above unit sprites)
@@ -114,9 +122,10 @@ This is a browser-run RTS simulation (no npm/build step required).
 
 ## Archives
 
-Version archives are stored in folders like `ver8/`, `ver9/`, `ver10/`, `ver11/`, `ver12/`, `ver13/`.
+Version archives are stored in folders like `ver8/`, `ver9/`, `ver10/`, `ver11/`, `ver12/`, `ver13/`, `ver14/`.
 
 ## Notes
 
 - `PROJECT_CONTEXT_MERGED.md` is the main source of truth for current state and handoff details.
 - `ver13/` is the v13-series snapshot archive, codename: `The first light / 初見之光`.
+- `ver14/` is the v14 combat release snapshot archive, codename: `Iron Frontier / 鐵鋒前線`.
