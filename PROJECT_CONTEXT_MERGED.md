@@ -343,3 +343,8 @@ Codename:
 
 - v14 public codename should be written as `Call to Arms / ¸¹¨¤ÅT°_`.
 - Intended theme: the project is entering its war/combat era.
+
+## 15) 2026-03-02 Enemy Camp Spawn Safety Note
+
+- Reserved the top-left enemy-camp staging area as a no-resource/no-animal spawn zone.
+- Goal: prevent trees, rocks, or wildlife from wrapping the enemy camp and blocking raider spawning/movement.

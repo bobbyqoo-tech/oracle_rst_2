@@ -632,8 +632,9 @@ function generate(params){
       state.grid[i] = (x===centerX && y===centerY) ? state.constants.Tile.Storage : state.constants.Tile.Empty;
     }
   }
-  for(let y=0;y<=5;y++){
-    for(let x=0;x<=5;x++){
+  const enemyCampClearMax = 5;
+  for(let y=0;y<=enemyCampClearMax;y++){
+    for(let x=0;x<=enemyCampClearMax;x++){
       if(!inBounds(x,y)) continue;
       const i=idx(x,y);
       if(state.grid[i]!==state.constants.Tile.Storage) state.grid[i]=state.constants.Tile.Empty;
@@ -642,6 +643,12 @@ function generate(params){
 
   const occ=new Set([`${centerX},${centerY}`]);
   occ.add(`${state.enemyCamp.x},${state.enemyCamp.y}`);
+  for(let y=0;y<=enemyCampClearMax;y++){
+    for(let x=0;x<=enemyCampClearMax;x++){
+      if(!inBounds(x,y)) continue;
+      occ.add(`${x},${y}`);
+    }
+  }
   function spawnRole(n,role){
     let created=0;
     for(let ring=1; created<n && ring<60; ring++){
