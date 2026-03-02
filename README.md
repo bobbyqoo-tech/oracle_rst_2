@@ -1,6 +1,6 @@
 ﻿# Mini RTS (Browser Simulation)
 
-Current version: `v14` (`號角響起`)
+Current version: `v14` (`Call to Arms / 號角響起`)
 
 Languages: [English](README.md) | [繁體中文](README.zh-TW.md)
 
@@ -17,7 +17,7 @@ This is a browser-run RTS simulation (no npm/build step required).
 
 ## Version Timeline (Newest -> Oldest)
 
-### v14 - Combat Frontier Release (`號角響起`)
+### v14 - Combat Frontier Release (`Call to Arms / 號角響起`)
 - Added friendly melee unit `saber` (`戰士`) with configurable initial count
 - Added enemy camp spawn origin at the top-left of the map
 - Added `生成敵人` button to spawn one enemy `raider` (`步兵`) near the enemy camp
@@ -128,4 +128,4 @@ Version archives are stored in folders like `ver8/`, `ver9/`, `ver10/`, `ver11/`
 
 - `PROJECT_CONTEXT_MERGED.md` is the main source of truth for current state and handoff details.
 - `ver13/` is the v13-series snapshot archive, codename: `The first light / 初見之光`.
-- `ver14/` is the v14 combat release snapshot archive, codename: `號角響起`.
+- `ver14/` is the v14 combat release snapshot archive, codename: `Call to Arms / 號角響起`.

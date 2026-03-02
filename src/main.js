@@ -489,7 +489,7 @@ function raf(t){
 resizeCanvases();
 updateCanvasZoom();
 state.ctx.fillStyle="#111"; state.ctx.fillRect(0,0,state.canvas.width,state.canvas.height);
-log(`v14 號角響起：combat frontier build 已啟用（mode=${RENDER_MODE}）。`);
+log(`v14 Call to Arms / 號角響起：combat frontier build 已啟用（mode=${RENDER_MODE}）。`);
 setStatus("READY");
 updateInfo();
 refreshTechUI();

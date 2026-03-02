@@ -338,3 +338,8 @@ Codename:
 
 - v14 codename was renamed from the previous working label to `號角響起`.
 - Apply this name for public release references, archive references, and future handoff notes.
+
+## 14) 2026-03-02 v14 English Title Note
+
+- v14 public codename should be written as `Call to Arms / 號角響起`.
+- Intended theme: the project is entering its war/combat era.
