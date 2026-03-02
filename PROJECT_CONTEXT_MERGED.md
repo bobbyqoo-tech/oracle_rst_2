@@ -306,3 +306,9 @@ All asset keys must be routed through a manifest for easy remapping.
 - Added basic `saber` vs `raider` melee combat loop in `src/sim.js`.
 - Raider behavior: 0.5x move speed, attacks units only, leash return to enemy camp.
 - Rendering fallback visuals added for enemy camp / new unit colors in pixel+sprite placeholder paths.
+
+## 11) 2026-03-02 Pages Deployment Note
+
+- Added GitHub Actions workflow `.github/workflows/deploy-pages.yml`.
+- Intended use: deploy GitHub Pages from current `main` contents when branch-based Pages publishing stops updating reliably.
+- Expected follow-up in GitHub UI: Pages source should switch from branch deploy to GitHub Actions after workflow is detected/run.
