@@ -333,3 +333,8 @@ Archive / routing:
 
 Codename:
 - `Iron Frontier / 鐵鋒前線`
+
+## 13) 2026-03-02 v14 Codename Rename Note
+
+- v14 codename was renamed from the previous working label to `號角響起`.
+- Apply this name for public release references, archive references, and future handoff notes.

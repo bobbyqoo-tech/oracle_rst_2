@@ -364,6 +364,7 @@ function makeUnit(id,role,x,y){
   const maxHP=roleMaxHP(role);
   const isSaber = role==="saber";
   const isRaider = role==="raider";
+  const isMobileUnit = role==="lumber" || role==="miner" || role==="hunter" || role==="builder" || role==="scout" || role==="saber" || role==="raider";
   return {
     id, role, x, y,
     state:"Idle",
@@ -400,12 +401,14 @@ function makeUnit(id,role,x,y){
     combatRange: (isSaber || isRaider) ? 1 : 0,
     attackCooldownTicks: (isSaber || isRaider) ? 30 : 0,
     atkCDTicks: 0,
-    moveIntervalTicks: isRaider ? 2 : 1,
+    moveIntervalTicks: isRaider ? 4 : (isMobileUnit ? 2 : 1),
     moveCDTicks: 0,
+    moveWaiting:false,
     homeX: x,
     homeY: y,
     leashRange: isRaider ? 10 : 0,
     combatTargetId: -1,
+    combatTargetKind: "unit",
   };
 }
 

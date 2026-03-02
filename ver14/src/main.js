@@ -223,8 +223,12 @@ function updateCanvasZoom(){
   const fit = Math.min(paneW / canvas.width, paneH / canvas.height);
   const zoomMul = Math.max(0.25, Math.min(4, mapZoomPct / 100));
   const scale = Math.max(0.01, fit * zoomMul);
-  canvas.style.width = `${Math.max(1, Math.round(canvas.width * scale))}px`;
-  canvas.style.height = `${Math.max(1, Math.round(canvas.height * scale))}px`;
+  const renderW = Math.max(1, Math.round(canvas.width * scale));
+  const renderH = Math.max(1, Math.round(canvas.height * scale));
+  canvas.style.width = `${renderW}px`;
+  canvas.style.height = `${renderH}px`;
+  gamePane.style.justifyContent = renderW <= paneW ? "center" : "flex-start";
+  gamePane.style.alignItems = renderH <= paneH ? "center" : "flex-start";
   if(zoomLabel) zoomLabel.textContent = `${Math.round(mapZoomPct)}%`;
   if(zoomRange) zoomRange.value = String(Math.round(mapZoomPct));
 }
@@ -485,7 +489,7 @@ function raf(t){
 resizeCanvases();
 updateCanvasZoom();
 state.ctx.fillStyle="#111"; state.ctx.fillRect(0,0,state.canvas.width,state.canvas.height);
-log(`v14 Iron Frontier / 鐵鋒前線：combat frontier build 已啟用（mode=${RENDER_MODE}）。`);
+log(`v14 號角響起：combat frontier build 已啟用（mode=${RENDER_MODE}）。`);
 setStatus("READY");
 updateInfo();
 refreshTechUI();

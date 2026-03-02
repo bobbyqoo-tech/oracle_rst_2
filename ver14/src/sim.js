@@ -571,7 +571,14 @@ function requestMoveToBuilding(u, b){
 }
 
 function tryStepFromPath(u){
+  u.moveWaiting=false;
   if(!u.path || !u.path.length){ u.state="Idle"; return false; }
+  const interval=Math.max(1, u.moveIntervalTicks||1);
+  if(interval>1 && u.moveCDTicks>0){
+    u.moveWaiting=true;
+    u.moveCDTicks--;
+    return false;
+  }
   const nextI=u.path[0];
   if(state.occupied[nextI]!==-1){
     if(state.constants.PUSH_STUCK_TICKS>0) u.stuckTicks++;
@@ -584,6 +591,7 @@ function tryStepFromPath(u){
   u.path.shift();
   state.occupied[nextI]=u.id;
   u.stuckTicks=0;
+  if(interval>1) u.moveCDTicks=interval-1;
   return true;
 }
 
@@ -641,8 +649,15 @@ function tryYieldOrPush(u, nextI){
 function isCombatUnit(u){
   return !!u && (u.role==="saber" || u.role==="raider");
 }
-function isAliveCombatTarget(u, targetId){
+function isAliveCombatTarget(u, targetKind, targetId){
   if(targetId==null || targetId<0) return null;
+  if(targetKind==="animal"){
+    const a=state.animals[targetId];
+    if(!a || a.state==="Dead") return null;
+    if(u.role!=="raider") return null;
+    if(u.leashRange>0 && cheb(a.x,a.y,u.homeX,u.homeY)>u.leashRange) return null;
+    return a;
+  }
   const t=state.units[targetId];
   if(!t || t.dead) return null;
   if(t.id===u.id) return null;
@@ -664,12 +679,14 @@ function nearestEnemyUnitFor(u){
   }
   return best;
 }
-function requestMoveToUnitMelee(u, target){
-  if(!u || !target || target.dead) return false;
+function requestMoveToCombatTarget(u, targetKind, target){
+  if(!u || !target) return false;
+  if(targetKind==="animal" && target.state==="Dead") return false;
+  if(targetKind!=="animal" && target.dead) return false;
   if(cheb(u.x,u.y,target.x,target.y)<=u.combatRange && !(u.x===target.x && u.y===target.y)) return true;
   const stand=chooseBestStandTile(u, idx(target.x,target.y));
   if(stand===-1) return false;
-  u.target={type:"unit", id:target.id};
+  u.target={type:targetKind, id:target.id};
   u.intent=null;
   requestPath(u.id, stand);
   return true;
@@ -686,22 +703,34 @@ function requestReturnToHome(u){
 }
 function decCombatCooldowns(u){
   if(u.atkCDTicks>0) u.atkCDTicks--;
-  if(u.moveCDTicks>0) u.moveCDTicks--;
 }
 function combatTryMove(u){
-  if(u.moveIntervalTicks>1 && u.moveCDTicks>0) return null;
   const moved=tryStepFromPath(u);
-  if(moved){
-    const interval=Math.max(1, u.moveIntervalTicks||1);
-    u.moveCDTicks = interval>1 ? (interval-1) : 0;
-  }
+  if(u.moveWaiting) return null;
   return moved;
 }
-function attackUnitTarget(attacker, target){
+function attackCombatTarget(attacker, targetKind, target){
   if(attacker.atkCDTicks>0) return false;
   attacker.atkCDTicks = Math.max(1, attacker.attackCooldownTicks||30);
-  dealDamageUnit(target, attacker.combatDamage||1, null);
+  if(targetKind==="animal") dealDamageAnimal(target, attacker.combatDamage||1);
+  else dealDamageUnit(target, attacker.combatDamage||1, null);
   return true;
+}
+function pickRaiderThreatAnimal(u){
+  const ownId=u.lastAttackerAnimalId;
+  if(ownId!=null && ownId>=0){
+    const a=state.animals[ownId];
+    if(a && a.state!=="Dead" && cheb(a.x,a.y,u.homeX,u.homeY)<=u.leashRange) return a;
+  }
+  for(const ally of (state.raiders||[])){
+    if(!ally || ally.dead) continue;
+    if(cheb(ally.x,ally.y,u.x,u.y)>6) continue;
+    const aid=ally.lastAttackerAnimalId;
+    if(aid==null || aid<0) continue;
+    const a=state.animals[aid];
+    if(a && a.state!=="Dead" && cheb(a.x,a.y,u.homeX,u.homeY)<=u.leashRange) return a;
+  }
+  return null;
 }
 function tickCombatUnit(u){
   if(!u || u.dead || !isCombatUnit(u)) return;
@@ -710,22 +739,35 @@ function tickCombatUnit(u){
 
   if(u.role==="raider" && u.leashRange>0){
     const outOfLeash = cheb(u.x,u.y,u.homeX,u.homeY) > u.leashRange;
-    const curTarget = isAliveCombatTarget(u, u.combatTargetId);
+    const curTarget = isAliveCombatTarget(u, u.combatTargetKind, u.combatTargetId);
     if(outOfLeash && (!curTarget || cheb(u.x,u.y,curTarget.x,curTarget.y)>u.combatRange)){
       requestReturnToHome(u);
     }
   }
 
-  let target = isAliveCombatTarget(u, u.combatTargetId);
+  let targetKind = u.combatTargetKind || "unit";
+  let target = isAliveCombatTarget(u, targetKind, u.combatTargetId);
   if(target && u.role==="raider" && u.leashRange>0 && cheb(target.x,target.y,u.homeX,u.homeY)>u.leashRange){
     target=null;
     u.combatTargetId=-1;
+    u.combatTargetKind="unit";
     u.target=null;
   }
   if(!target){
-    target = nearestEnemyUnitFor(u);
+    if(u.role==="raider"){
+      const threatAnimal=pickRaiderThreatAnimal(u);
+      if(threatAnimal){
+        target=threatAnimal;
+        targetKind="animal";
+      }
+    }
+    if(!target){
+      target = nearestEnemyUnitFor(u);
+      targetKind="unit";
+    }
     u.combatTargetId = target ? target.id : -1;
-    if(target) u.target = { type:"unit", id:target.id };
+    u.combatTargetKind = target ? targetKind : "unit";
+    if(target) u.target = { type:targetKind, id:target.id };
   }
 
   if(!target){
@@ -756,12 +798,12 @@ function tickCombatUnit(u){
   if(cheb(u.x,u.y,target.x,target.y)<= (u.combatRange||1) && !(u.x===target.x && u.y===target.y)){
     u.state="Fight";
     u.path=[];
-    attackUnitTarget(u, target);
+    attackCombatTarget(u, targetKind, target);
     return;
   }
 
   const needsRepath = (!u.path || !u.path.length || (state.tickCount % 8)===0);
-  if(needsRepath) requestMoveToUnitMelee(u, target);
+  if(needsRepath) requestMoveToCombatTarget(u, targetKind, target);
   u.state="Move";
   const moved=combatTryMove(u);
   if(moved===null) return;
@@ -778,7 +820,7 @@ function tickCombatUnit(u){
   }
   if(!u.path.length && cheb(u.x,u.y,target.x,target.y)<= (u.combatRange||1)){
     u.state="Fight";
-    attackUnitTarget(u, target);
+    attackCombatTarget(u, targetKind, target);
   }
 }
 
@@ -796,6 +838,7 @@ function tickBuilder(u){
   if(u.state==="Move" || u.state==="ToStorage" || u.state==="ToPark" || u.state==="ToTransplantation"){
     const moved=tryStepFromPath(u);
     if(!moved){
+      if(u.moveWaiting) return;
       if(u.stuckTicks>state.constants.PUSH_STUCK_TICKS && tryYieldOrPush(u, u.path[0])) return;
       if(u.stuckTicks>16){
         u.stuckTicks=0;
@@ -873,6 +916,7 @@ function tickWorker(u){
       }
     }
     if(!moved){
+      if(u.moveWaiting) return;
       if(u.stuckTicks>state.constants.PUSH_STUCK_TICKS && tryYieldOrPush(u, u.path[0])) return;
       if(u.stuckTicks>state.constants.RES_STUCK_TICKS && u.target && (u.target.type==="tree" || u.target.type==="rock") && u.carry===0){
         if(retargetBlockedGatherer(u)) return;
@@ -1099,6 +1143,28 @@ function pickFrontierForScout(u){
   }
   return best;
 }
+function pickPatrolTargetForScout(u){
+  let best=-1, bestScore=-1;
+  for(let s=0;s<120;s++){
+    const x=(Math.random()*state.constants.W)|0, y=(Math.random()*state.constants.H)|0;
+    const i=idx(x,y);
+    if(state.grid[i]===state.constants.Tile.Block) continue;
+    if(!state.explored[i]) continue;
+    if(!isWalkableTile(i) && state.grid[i]!==state.constants.Tile.Storage) continue;
+    const d=Math.abs(x-u.x)+Math.abs(y-u.y);
+    let unseenAround=0;
+    for(let dy=-2; dy<=2; dy++){
+      for(let dx=-2; dx<=2; dx++){
+        const nx=x+dx, ny=y+dy;
+        if(!inBounds(nx,ny)) continue;
+        if(!state.visible[idx(nx,ny)]) unseenAround++;
+      }
+    }
+    const score=d + unseenAround*2;
+    if(score>bestScore){ bestScore=score; best=i; }
+  }
+  return best;
+}
 
 function tickScout(u){
   if(u.dead) return;
@@ -1108,6 +1174,7 @@ function tickScout(u){
   if(u.state==="Move" || u.state==="Explore" || u.state==="ToTransplantation"){
     const moved=tryStepFromPath(u);
     if(!moved){
+      if(u.moveWaiting) return;
       if(u.stuckTicks>16){
         u.stuckTicks=0;
         if(u.path && u.path.length){
@@ -1126,10 +1193,11 @@ function tickScout(u){
   if(state.tickCount>=u.nextScoutThinkTick){
     u.nextScoutThinkTick = state.tickCount + Math.max(10, (state.TICK_HZ|0));
     const fi=pickFrontierForScout(u);
-    if(fi!==-1){
-      u.exploreTarget=fi;
+    const targetI = fi!==-1 ? fi : pickPatrolTargetForScout(u);
+    if(targetI!==-1){
+      u.exploreTarget=targetI;
       u.intent=null;
-      requestPath(u.id, fi);
+      requestPath(u.id, targetI);
       u.state="Explore";
     }
   }
