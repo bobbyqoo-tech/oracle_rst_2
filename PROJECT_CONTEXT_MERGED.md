@@ -348,3 +348,8 @@ Codename:
 
 - Reserved the top-left enemy-camp staging area as a no-resource/no-animal spawn zone.
 - Goal: prevent trees, rocks, or wildlife from wrapping the enemy camp and blocking raider spawning/movement.
+
+## 16) 2026-03-02 v14.1 Saber Standby Fix
+
+- Friendly `saber` units now return to tiles adjacent to the town center when no enemy is detected.
+- Goal: keep idle combat units staged near the base instead of scattering where the last engagement ended.

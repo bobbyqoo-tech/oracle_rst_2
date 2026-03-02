@@ -701,6 +701,27 @@ function requestReturnToHome(u){
   u.state="Return";
   return true;
 }
+function requestSaberStandby(u){
+  const town=getTownCenter();
+  if(!town) return false;
+  if(isAdjacentToBuilding(u.x,u.y,town)){
+    u.state="Idle";
+    u.path=[];
+    u.target=null;
+    u.combatTargetId=-1;
+    u.combatTargetKind="unit";
+    return true;
+  }
+  const stand=chooseBestStandTile(u, idx(town.x,town.y));
+  if(stand===-1) return false;
+  u.target={type:"standby", id:town.id};
+  u.combatTargetId=-1;
+  u.combatTargetKind="unit";
+  u.intent=null;
+  requestPath(u.id, stand);
+  u.state="Return";
+  return true;
+}
 function decCombatCooldowns(u){
   if(u.atkCDTicks>0) u.atkCDTicks--;
 }
@@ -789,8 +810,24 @@ function tickCombatUnit(u){
         u.state="Idle";
       }
     } else {
-      u.state="Idle";
-      u.path=[];
+      const town=getTownCenter();
+      if(town && !isAdjacentToBuilding(u.x,u.y,town)){
+        if((!u.path || !u.path.length) && !u.waitingPath) requestSaberStandby(u);
+        if(u.state==="Move" || u.state==="Return"){
+          const moved=combatTryMove(u);
+          if(moved===null) return;
+          if(!moved){
+            if(u.path && u.path.length){
+              u.stuckTicks++;
+              if(u.stuckTicks>16) requestPath(u.id, u.path[u.path.length-1]);
+            }
+          }
+          if(!u.path || !u.path.length) u.state="Idle";
+        }
+      } else {
+        u.state="Idle";
+        u.path=[];
+      }
     }
     return;
   }
